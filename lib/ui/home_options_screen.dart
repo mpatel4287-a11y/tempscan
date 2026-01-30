@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'auto_enhance_screen.dart';
 import 'ocr_screen.dart';
@@ -5,9 +8,60 @@ import 'merge_pdfs_screen.dart';
 import 'password_pdf_screen.dart';
 import 'signature_screen.dart';
 import '../camera/camera_screen.dart';
+import 'create_video_pdf_screen.dart';
+import 'video_pdf_viewer_screen.dart';
 
-class HomeOptionsScreen extends StatelessWidget {
+class HomeOptionsScreen extends StatefulWidget {
   const HomeOptionsScreen({super.key});
+
+  @override
+  State<HomeOptionsScreen> createState() => _HomeOptionsScreenState();
+}
+
+class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
+  late AppLinks _appLinks;
+  StreamSubscription<Uri>? _linkSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _initDeepLinks();
+  }
+
+  void _initDeepLinks() {
+    _appLinks = AppLinks();
+
+    // Check initial link if app was closed
+    _appLinks.getInitialLink().then((uri) {
+      if (uri != null) _handleLink(uri);
+    });
+
+    // Handle link when app is in background/foreground
+    _linkSubscription = _appLinks.uriLinkStream.listen((uri) {
+      _handleLink(uri);
+    });
+  }
+
+  void _handleLink(Uri uri) {
+    // Files opened via intent usually have file:// or content:// scheme
+    final path = uri.toFilePath();
+    if (path.endsWith('.vpdf') || path.endsWith('.pdf')) {
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VideoPdfViewerScreen(initialFile: File(path)),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _linkSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -114,6 +168,34 @@ class HomeOptionsScreen extends StatelessWidget {
                           context,
                           MaterialPageRoute(
                             builder: (_) => const CameraScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    _OptionCard(
+                      icon: Icons.video_library,
+                      title: 'Create Video PDF',
+                      subtitle: 'Embed videos in PDF',
+                      color: Colors.indigo,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const CreateVideoPdfScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    _OptionCard(
+                      icon: Icons.play_lesson,
+                      title: 'Video PDF Player',
+                      subtitle: 'Play videos from PDF',
+                      color: Colors.pink,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const VideoPdfViewerScreen(),
                           ),
                         );
                       },

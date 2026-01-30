@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../temp_storage/temp_image_manager.dart';
+import '../services/settings_service.dart';
 import '../document_builder/pdf_builder.dart';
 import '../utils/file_size_helper.dart';
 import '../ui/pdf_success_screen.dart';
@@ -32,7 +33,21 @@ class _ReviewScreenState extends State<ReviewScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedSavePath = 'Documents';
+    _loadDefaultSavePath();
+  }
+
+  Future<void> _loadDefaultSavePath() async {
+    final path = await SettingsService.getDefaultSavePath();
+    if (path != null) {
+      setState(() {
+        _selectedSavePath = path.split('/').last;
+        _customSaveDirectory = Directory(path);
+      });
+    } else {
+      setState(() {
+        _selectedSavePath = 'Documents';
+      });
+    }
   }
 
   @override
@@ -70,6 +85,21 @@ class _ReviewScreenState extends State<ReviewScreen> {
           IconButton(
             icon: const Icon(Icons.folder_open),
             onPressed: () => _showSaveLocationDialog(),
+          ),
+          // Settings button to change default save location
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () async {
+              final newPath = await SettingsService.getOrPickSavePath(forcePick: true);
+              if (newPath != null && context.mounted) {
+                // Refresh local state if needed (though next save will use it)
+                _loadDefaultSavePath();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Default save location updated to: $newPath')),
+                );
+              }
+            },
+            tooltip: 'Change Default Save Location',
           ),
         ],
       ),

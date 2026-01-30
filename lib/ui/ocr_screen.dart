@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 class OcrScreen extends StatefulWidget {
   const OcrScreen({super.key});
@@ -53,51 +54,17 @@ class _OcrScreenState extends State<OcrScreen> {
     });
 
     try {
-      // Simulate OCR processing time
-      await Future.delayed(const Duration(seconds: 2));
-
-      // Get image info for simulation
-      final imageBytes = await _selectedImage!.readAsBytes();
-      final imageSize = imageBytes.length;
+      final inputImage = InputImage.fromFile(_selectedImage!);
+      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      final recognizedText = await textRecognizer.processImage(inputImage);
+      
+      await textRecognizer.close();
 
       if (!mounted) return;
 
-      // For a real implementation with ML Kit, use:
-      /*
-      import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-      
-      final inputImage = InputImage.fromFile(_selectedImage!);
-      final textRecognizer = TextRecognizer();
-      final recognizedText = await textRecognizer.processImage(inputImage);
-      _extractedText = recognizedText.text;
-      */
-
-      // Simulated extracted text for demonstration
-      final simulatedText =
-          '''Extracted text from: ${_selectedImage!.path.split('/').last}
-
-This is a demonstration of the OCR (Optical Character Recognition) feature.
-
-To enable real OCR, add to pubspec.yaml:
-  google_mlkit_text_recognition: ^0.12.0
-
-Then use the following code:
-  final inputImage = InputImage.fromFile(_selectedImage!);
-  final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-  final recognizedText = await textRecognizer.processImage(inputImage);
-  _extractedText = recognizedText.text;
-
-Features available:
-• Copy extracted text to clipboard
-• Share text with other apps
-• Search within extracted text
-
-Image size: ${(imageSize / 1024).toStringAsFixed(1)} KB
-Image path: ${_selectedImage!.path}''';
-
       setState(() {
-        _extractedText = simulatedText;
-        _detectedLines = simulatedText
+        _extractedText = recognizedText.text;
+        _detectedLines = _extractedText
             .split('\n')
             .where((line) => line.trim().isNotEmpty)
             .toList();

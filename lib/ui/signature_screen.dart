@@ -26,6 +26,38 @@ class _SignatureScreenState extends State<SignatureScreen> {
   final GlobalKey<_SignaturePainterState> _painterKey =
       GlobalKey<_SignaturePainterState>();
 
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedSignatures();
+  }
+
+  Future<void> _loadSavedSignatures() async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final signatureDir = Directory('${tempDir.path}/signatures');
+
+      if (await signatureDir.exists()) {
+        final files = signatureDir
+            .listSync()
+            .where((entity) => entity is File && entity.path.endsWith('.png'))
+            .map((entity) => File(entity.path))
+            .toList();
+
+        // Sort by modification time (newest first)
+        files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+        if (mounted) {
+          setState(() {
+            _savedSignatures.addAll(files);
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading signatures: $e');
+    }
+  }
+
   Future<void> _saveSignature() async {
     if (_painterKey.currentState?.isEmpty ?? true) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -464,11 +496,11 @@ class _SignaturePainterState extends State<SignaturePainter> {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
 
-    // Draw white background
-    canvas.drawRect(
-      const Rect.fromLTWH(0, 0, 500, 200),
-      Paint()..color = Colors.white,
-    );
+    // Draw transparent background (do nothing, it's transparent by default)
+    // canvas.drawRect(
+    //   const Rect.fromLTWH(0, 0, 500, 200),
+    //   Paint()..color = Colors.transparent,
+    // );
 
     // Draw strokes
     for (final stroke in _strokes) {

@@ -67,7 +67,26 @@ class _AutoEnhanceScreenState extends State<AutoEnhanceScreen> {
 
       for (int i = 0; i < _selectedImages.length; i++) {
         final image = _selectedImages[i];
-        _manager.addImage(image);
+        
+        // Check if we have enhancements to apply
+        // For simplicity in this edit, we re-process to get the enhanced bytes if needed
+        // In a real app we might optimize this to avoid re-processing 
+        
+        final bytes = await image.readAsBytes();
+        
+        // We need to re-apply the current settings to this image
+        // BUT current settings (_brightness, etc) only apply to the current preview image.
+        // This logic implies we apply the *current slider settings* to ALL images?
+        // Or should we process them one by one?
+        // The UI shows Global settings. So we apply global settings to all images.
+        
+        final processedBytes = _processImage(bytes);
+        
+        // always save as new temp file
+        final tempFile = await _manager.createTempImageFile();
+        await tempFile.writeAsBytes(processedBytes);
+        
+        _manager.addImage(tempFile);
       }
 
       if (!mounted) return;

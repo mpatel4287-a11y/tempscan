@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../camera/camera_screen.dart';
+import 'create_video_pdf_screen.dart';
+import 'video_pdf_viewer_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -38,6 +40,34 @@ class HomeScreen extends StatelessWidget {
                     'Scan Document',
                     style: TextStyle(fontSize: 16),
                   ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const CreateVideoPdfScreen()),
+                    );
+                  },
+                  child: const Text('Create Video PDF'),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const VideoPdfViewerScreen()),
+                    );
+                  },
+                  child: const Text('Open Video PDF Player'),
                 ),
               ),
             ],

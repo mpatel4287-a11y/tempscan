@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
 import '../temp_storage/temp_image_manager.dart';
+import '../services/settings_service.dart';
 
 class PdfBuilder {
   static Future<File> createPdf({
@@ -55,9 +56,10 @@ class PdfBuilder {
       );
     }
 
-    // Use custom directory or default to documents
-    final directory =
-        customDirectory ?? await getApplicationDocumentsDirectory();
+    // Use custom directory, default save path from SettingsService, or documents folder
+    final defaultSavePath = await SettingsService.getOrPickSavePath();
+    final directory = customDirectory ?? 
+        (defaultSavePath != null ? Directory(defaultSavePath) : await getApplicationDocumentsDirectory());
 
     // Ensure directory exists
     if (!await directory.exists()) {

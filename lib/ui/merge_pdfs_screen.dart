@@ -6,9 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart' as pdfx;
 import '../utils/file_size_helper.dart';
+import '../services/settings_service.dart';
 import 'pdf_success_screen.dart';
 import 'rename_dialog.dart';
 
@@ -107,9 +107,13 @@ class _MergePdfsScreenState extends State<MergePdfsScreen> {
         await pdfDoc.close();
       }
 
-      // Determine save location
-      final directory =
-          _customSaveDirectory ?? await getApplicationDocumentsDirectory();
+      // Determine save location using SettingsService
+      final directoryPath = await SettingsService.getOrPickSavePath();
+      if (directoryPath == null) {
+        if (mounted) setState(() => _isProcessing = false);
+        return;
+      }
+      final directory = Directory(directoryPath);
       if (!await directory.exists()) {
         await directory.create(recursive: true);
       }
@@ -423,6 +427,18 @@ class _MergePdfsScreenState extends State<MergePdfsScreen> {
               tooltip: 'Watermark',
               color: _addWatermark ? Colors.blue : null,
             ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () async {
+              final newPath = await SettingsService.getOrPickSavePath(forcePick: true);
+              if (newPath != null && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Default save location updated to: $newPath')),
+                );
+              }
+            },
+            tooltip: 'Change Default Save Location',
+          ),
         ],
       ),
       body: Column(
