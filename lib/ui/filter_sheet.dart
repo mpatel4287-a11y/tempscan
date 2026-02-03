@@ -14,7 +14,9 @@ enum ImageFilterType {
   contrast('Contrast', Icons.contrast, Color(0xFF607D8B)),
   saturation('Vivid', Icons.palette, Color(0xFFF8BBD9)),
   cool('Cool', Icons.ac_unit, Color(0xFFB2EBF2)),
-  warm('Warm', Icons.whatshot, Color(0xFFFFCC80));
+  warm('Warm', Icons.whatshot, Color(0xFFFFCC80)),
+  modernPro('Modern Pro', Icons.auto_awesome, Color(0xFFE3F2FD)),
+  vintageDoc('Vintage Doc', Icons.history_edu, Color(0xFFF3E5F5));
 
   final String label;
   final IconData icon;
@@ -204,6 +206,20 @@ class _FilterPreviewWidgetState extends State<FilterPreviewWidget> {
           1,
           0,
         ]);
+      case ImageFilter.modernPro:
+        return const ColorFilter.matrix([
+          1.2, 0.1, 0.1, 0, -20,
+          0.1, 1.2, 0.1, 0, -20,
+          0.1, 0.1, 1.2, 0, -20,
+          0, 0, 0, 1, 0,
+        ]);
+      case ImageFilter.vintageDoc:
+        return const ColorFilter.matrix([
+          0.9, 0.5, 0.1, 0, 0,
+          0.3, 0.8, 0.1, 0, 0,
+          0.2, 0.3, 0.5, 0, 0,
+          0, 0, 0, 1, 0,
+        ]);
     }
   }
 
@@ -319,6 +335,10 @@ class _FilterSheetState extends State<FilterSheet> {
         return ImageFilterType.contrast;
       case ImageFilter.saturation:
         return ImageFilterType.saturation;
+      case ImageFilter.modernPro:
+        return ImageFilterType.modernPro;
+      case ImageFilter.vintageDoc:
+        return ImageFilterType.vintageDoc;
     }
   }
 
@@ -404,7 +424,7 @@ class _FilterSheetState extends State<FilterSheet> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -555,6 +575,10 @@ class _FilterSheetState extends State<FilterSheet> {
         return ImageFilter.brightness; // Map to brightness for now
       case ImageFilterType.warm:
         return ImageFilter.brightness; // Map to brightness for now
+      case ImageFilterType.modernPro:
+        return ImageFilter.modernPro;
+      case ImageFilterType.vintageDoc:
+        return ImageFilter.vintageDoc;
     }
   }
 }

@@ -32,6 +32,8 @@ dependencies:
   get_thumbnail_video: ^0.7.3
   shared_preferences: ^2.5.4
 
+  syncfusion_flutter_pdf: ^32.1.25
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

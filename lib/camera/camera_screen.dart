@@ -20,6 +20,9 @@ class _CameraScreenState extends State<CameraScreen> {
   bool _showFlash = false;
   bool _showGrid = false;
   int _flashMode = 0; // 0 = off, 1 = on, 2 = auto
+  bool _isAutoScan = true;
+  DateTime? _steadyStartTime;
+  bool _isCapturing = false;
 
   @override
   void initState() {
@@ -29,7 +32,49 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Future<void> _initializeCamera() async {
     await _cameraController.initialize();
+    _cameraController.controller?.startImageStream(_processCameraImage);
     setState(() => _ready = true);
+  }
+
+  void _processCameraImage(CameraImage image) {
+    if (!_isAutoScan || _isCapturing) return;
+
+    // Simple steady detection: we look for minimal motion
+    // This is a placeholder for more advanced edge detection
+    // For now, we'll use a timer-based steady detection if the device is held relatively still
+    // In a real app, you'd analyze pixels for edges/corners
+    
+    _checkSteady();
+  }
+
+  void _checkSteady() {
+    // Simulated steady detection logic
+    // In a production app, use accelerometer or pixel variance
+    if (_steadyStartTime == null) {
+      _steadyStartTime = DateTime.now();
+    } else {
+      final duration = DateTime.now().difference(_steadyStartTime!);
+      if (duration.inMilliseconds > 1500) { // 1.5 seconds steady
+        if (!_isCapturing) {
+          _triggerAutoCapture();
+        }
+      }
+    }
+  }
+
+  Future<void> _triggerAutoCapture() async {
+    _isCapturing = true;
+    _steadyStartTime = null;
+    
+    if (mounted) {
+      setState(() => _showFlash = true);
+      await _cameraController.captureImage();
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (mounted) setState(() => _showFlash = false);
+    }
+    
+    await Future.delayed(const Duration(seconds: 2)); // cooldown
+    _isCapturing = false;
   }
 
   @override
@@ -104,11 +149,44 @@ class _CameraScreenState extends State<CameraScreen> {
                       center: Alignment.center,
                       radius: 1.2,
                       colors: [
-                        Colors.white.withOpacity(0.9),
-                        Colors.white.withOpacity(0.4),
+                        Colors.white.withValues(alpha: 0.9),
+                        Colors.white.withValues(alpha: 0.4),
                         Colors.transparent,
                       ],
                     ),
+                  ),
+                ),
+              ),
+            ),
+          
+          // Auto-Scan status message
+          if (_isAutoScan && !_isCapturing)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 80,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _steadyStartTime == null ? Icons.document_scanner : Icons.timer_outlined,
+                        color: Colors.blueAccent,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _steadyStartTime == null ? 'FINDING DOCUMENT...' : 'HOLD STEADY...',
+                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -144,9 +222,19 @@ class _CameraScreenState extends State<CameraScreen> {
 
                   // Flash toggle
                   _buildTopButton(
-                    icon: Icons
-                        .flash_off, // Will be replaced by _buildFlashIcon widget
+                    icon: _flashMode == 0 ? Icons.flash_off : (_flashMode == 1 ? Icons.flash_on : Icons.flash_auto),
                     onTap: _toggleFlash,
+                  ),
+                  
+                  // Auto Scan toggle
+                  _buildTopButton(
+                    icon: _isAutoScan ? Icons.auto_mode : Icons.back_hand,
+                    label: _isAutoScan ? 'AUTO' : 'MANUAL',
+                    onTap: () => setState(() {
+                      _isAutoScan = !_isAutoScan;
+                      _steadyStartTime = null;
+                    }),
+                    color: _isAutoScan ? Colors.blueAccent : null,
                   ),
                 ],
               ),
@@ -154,7 +242,7 @@ class _CameraScreenState extends State<CameraScreen> {
           ),
 
           // Scan frame overlay
-          const _ScanFrameOverlay(),
+          _ScanFrameOverlay(isAutoScan: _isAutoScan),
 
           // Bottom control bar
           Positioned(
@@ -173,8 +261,8 @@ class _CameraScreenState extends State<CameraScreen> {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withOpacity(0.3),
-                    Colors.black.withOpacity(0.9),
+                    Colors.black.withValues(alpha: 0.3),
+                    Colors.black.withValues(alpha: 0.9),
                   ],
                 ),
               ),
@@ -287,17 +375,29 @@ class _CameraScreenState extends State<CameraScreen> {
   Widget _buildTopButton({
     required IconData icon,
     required VoidCallback onTap,
+    String? label,
+    Color? color,
   }) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: Colors.black26,
-          borderRadius: BorderRadius.circular(22),
-        ),
-        child: Icon(icon, color: Colors.white, size: 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: (color ?? Colors.black26).withOpacity(0.5),
+              borderRadius: BorderRadius.circular(22),
+              border: color != null ? Border.all(color: color, width: 2) : null,
+            ),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
+          if (label != null) ...[
+            const SizedBox(height: 4),
+            Text(label, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+          ],
+        ],
       ),
     );
   }
@@ -600,29 +700,80 @@ class _GridOverlay extends StatelessWidget {
 }
 
 class _ScanFrameOverlay extends StatelessWidget {
-  const _ScanFrameOverlay();
+  final bool isAutoScan;
+  const _ScanFrameOverlay({required this.isAutoScan});
 
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
       child: Stack(
         children: [
-          Container(color: Colors.black.withOpacity(0.25)),
+          Container(color: Colors.black.withValues(alpha: 0.1)),
           Center(
             child: Container(
               width: MediaQuery.of(context).size.width * 0.85,
               height: MediaQuery.of(context).size.height * 0.55,
               decoration: BoxDecoration(
                 border: Border.all(
-                  color: Colors.white.withOpacity(0.8),
+                  color: isAutoScan ? Colors.blueAccent.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.3),
                   width: 1.5,
                 ),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Stack(
+                children: [
+                   // Animated "scanning" line if auto is on
+                   if (isAutoScan) _ScanningEffect(),
+                ],
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ScanningEffect extends StatefulWidget {
+  @override
+  State<_ScanningEffect> createState() => _ScanningEffectState();
+}
+
+class _ScanningEffectState extends State<_ScanningEffect> with SingleTickerProviderStateMixin {
+  late AnimationController _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _anim = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (context, child) {
+        return Positioned(
+          top: _anim.value * MediaQuery.of(context).size.height * 0.55,
+          left: 0,
+          right: 0,
+          child: Container(
+            height: 2,
+            decoration: BoxDecoration(
+              boxShadow: [
+                BoxShadow(color: Colors.blueAccent.withOpacity(0.5), blurRadius: 10, spreadRadius: 2),
+              ],
+              color: Colors.blueAccent,
+            ),
+          ),
+        );
+      },
     );
   }
 }

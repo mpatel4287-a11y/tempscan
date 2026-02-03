@@ -3,7 +3,31 @@ import 'dart:ui' as ui;
 import 'package:path_provider/path_provider.dart';
 
 /// Filter types available for images
-enum ImageFilter { none, grayscale, sepia, brightness, contrast, saturation }
+enum ImageFilter { none, grayscale, sepia, brightness, contrast, saturation, modernPro, vintageDoc }
+
+/// Annotation types
+enum AnnotationType { highlight, underline, pen, square, circle, arrow, text }
+
+/// Individual annotation data
+class Annotation {
+  final String id;
+  final List<ui.Offset> points;
+  final ui.Color color;
+  final double strokeWidth;
+  final AnnotationType type;
+  final String? text;
+  ui.Offset? position; // Used for text or shape displacement
+
+  Annotation({
+    String? id,
+    required this.points,
+    required this.color,
+    this.strokeWidth = 4.0,
+    required this.type,
+    this.text,
+    this.position,
+  }) : id = id ?? DateTime.now().microsecondsSinceEpoch.toString();
+}
 
 /// Crop rectangle (normalized 0-1 coordinates)
 class CropRect {
@@ -69,6 +93,13 @@ class ScannedPage {
   Map<String, double>
   filterValues; // For adjustable filters like brightness, contrast
   CropRect cropRect; // Crop rectangle (normalized 0-1 coordinates)
+  String? signaturePath; // Path to signature image
+  ui.Offset? signaturePosition; // Normalized position (0-1)
+  List<Annotation> annotations; // List of user annotations
+  double clarity; // 0.0 to 1.0
+  double noiseReduction; // 0.0 to 1.0
+
+  String get effectiveName => customName ?? file.path.split('/').last;
 
   ScannedPage({
     required this.file,
@@ -77,6 +108,11 @@ class ScannedPage {
     this.filter = ImageFilter.none,
     this.filterValues = const {},
     this.cropRect = CropRect.full,
+    this.signaturePath,
+    this.signaturePosition,
+    this.annotations = const [],
+    this.clarity = 0.0,
+    this.noiseReduction = 0.0,
   });
 
   /// Get effective name (custom or auto-generated from filename)
@@ -185,6 +221,7 @@ class TempImageManager {
     }
   }
 
+
   /// Set custom name for a page
   void setCustomName(int index, String name) {
     if (index >= 0 && index < _pages.length) {
@@ -211,6 +248,29 @@ class TempImageManager {
     }
   }
 
+  /// Apply digital signature
+  void applySignature(int index, String? path, [ui.Offset? position]) {
+    if (index >= 0 && index < _pages.length) {
+      _pages[index].signaturePath = path;
+      _pages[index].signaturePosition = position ?? const ui.Offset(0.7, 0.8);
+    }
+  }
+
+  /// Apply annotations to a page
+  void applyAnnotations(int index, List<Annotation> annotations) {
+    if (index >= 0 && index < _pages.length) {
+      _pages[index].annotations = List.from(annotations);
+    }
+  }
+
+  /// Apply advanced enhancements
+  void applyEnhancements(int index, {double? clarity, double? noiseReduction}) {
+    if (index >= 0 && index < _pages.length) {
+      if (clarity != null) _pages[index].clarity = clarity;
+      if (noiseReduction != null) _pages[index].noiseReduction = noiseReduction;
+    }
+  }
+
   /// Get crop rectangle for a page
   CropRect? getCropRect(int index) {
     if (index >= 0 && index < _pages.length) {
@@ -234,6 +294,10 @@ class TempImageManager {
         return 'Contrast';
       case ImageFilter.saturation:
         return 'Saturation';
+      case ImageFilter.modernPro:
+        return 'Modern Pro';
+      case ImageFilter.vintageDoc:
+        return 'Vintage Doc';
     }
   }
 

@@ -107,6 +107,7 @@ class CropScreen extends StatefulWidget {
   final VoidCallback onReset;
   final VoidCallback onCancel;
   final CropController? controller;
+  final int rotation;
 
   const CropScreen({
     super.key,
@@ -117,6 +118,7 @@ class CropScreen extends StatefulWidget {
     required this.onReset,
     required this.onCancel,
     this.controller,
+    this.rotation = 0,
   });
 
   @override
@@ -223,27 +225,30 @@ class _CropScreenState extends State<CropScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       appBar: _buildAppBar(),
-      body: Column(
-        children: [
-          // Image preview with crop area
-          Expanded(
-            child: _image == null
-                ? const Center(
-                    child: CircularProgressIndicator(color: Colors.white),
-                  )
-                : _CropInteractiveArea(
-                    imagePath: widget.imagePath,
-                    image: _image!,
-                    controller: _cropController,
-                    onCropChanged: (crop) {
-                      widget.onCropChanged(crop);
-                    },
-                  ),
-          ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Image preview with crop area
+            Expanded(
+              child: _image == null
+                  ? const Center(
+                      child: CircularProgressIndicator(color: Colors.white),
+                    )
+                  : _CropInteractiveArea(
+                      imagePath: widget.imagePath,
+                      image: _image!,
+                      controller: _cropController,
+                      rotation: widget.rotation,
+                      onCropChanged: (crop) {
+                        widget.onCropChanged(crop);
+                      },
+                    ),
+            ),
 
-          // Control panel
-          _buildControlPanel(),
-        ],
+            // Control panel
+            _buildControlPanel(),
+          ],
+        ),
       ),
     );
   }
@@ -315,7 +320,7 @@ class _CropScreenState extends State<CropScreen> {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3),
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),
@@ -450,12 +455,14 @@ class _CropInteractiveArea extends StatefulWidget {
   final String imagePath;
   final ui.Image image;
   final CropController controller;
+  final int rotation;
   final Function(CropRect) onCropChanged;
 
   const _CropInteractiveArea({
     required this.imagePath,
     required this.image,
     required this.controller,
+    required this.rotation,
     required this.onCropChanged,
   });
 
@@ -471,6 +478,8 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
   Offset _offset = Offset.zero;
 
   Rect _imageDisplayRect = Rect.zero;
+  Offset? _dragStartLocalPos;
+  CropRect _dragStartCrop = CropRect.full;
 
   @override
   void initState() {
@@ -505,32 +514,30 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
     }
   }
 
-  void _calculateDisplayRect(Size screenSize) {
-    final imageAspect = widget.image.width / widget.image.height;
-    final screenAspect = screenSize.width / screenSize.height;
+  void _calculateDisplayRect(Size availableSize) {
+    bool isRotated = widget.rotation % 180 != 0;
+    double imageWidth = isRotated ? widget.image.height.toDouble() : widget.image.width.toDouble();
+    double imageHeight = isRotated ? widget.image.width.toDouble() : widget.image.height.toDouble();
+    
+    final imageAspect = imageWidth / imageHeight;
+    final areaAspect = availableSize.width / availableSize.height;
 
-    if (screenAspect > imageAspect) {
-      // Screen is wider than image - image is centered vertically
-      final displayHeight =
-          screenSize.height * 0.85; // Use 85% of screen height
-      final displayWidth = displayHeight * imageAspect;
-      _imageDisplayRect = Rect.fromLTWH(
-        (screenSize.width - displayWidth) / 2,
-        (screenSize.height - displayHeight) / 2,
-        displayWidth,
-        displayHeight,
-      );
+    double displayWidth, displayHeight;
+
+    if (areaAspect > imageAspect) {
+      displayHeight = availableSize.height * 0.9;
+      displayWidth = displayHeight * imageAspect;
     } else {
-      // Screen is taller than image - image is centered horizontally
-      final displayWidth = screenSize.width * 0.95; // Use 95% of screen width
-      final displayHeight = displayWidth / imageAspect;
-      _imageDisplayRect = Rect.fromLTWH(
-        (screenSize.width - displayWidth) / 2,
-        (screenSize.height - displayHeight) / 2,
-        displayWidth,
-        displayHeight,
-      );
+      displayWidth = availableSize.width * 0.9;
+      displayHeight = displayWidth / imageAspect;
     }
+
+    _imageDisplayRect = Rect.fromLTWH(
+      (availableSize.width - displayWidth) / 2,
+      (availableSize.height - displayHeight) / 2,
+      displayWidth,
+      displayHeight,
+    );
   }
 
   void _handleDragStart(DragStartDetails details, String handle) {
@@ -539,18 +546,14 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
     widget.controller.saveCurrentAsPrevious();
   }
 
-  void _handleDragUpdate(DragUpdateDetails details) {
+  void _handleDragUpdate(DragUpdateDetails details, Size availableSize) {
     if (_activeHandle == null) return;
 
-    final screenSize = MediaQuery.of(context).size;
-    _calculateDisplayRect(screenSize);
-
-    final relativeX =
-        (details.globalPosition.dx - _imageDisplayRect.left) /
-        _imageDisplayRect.width;
-    final relativeY =
-        (details.globalPosition.dy - _imageDisplayRect.top) /
-        _imageDisplayRect.height;
+    final RenderBox renderBox = context.findRenderObject() as RenderBox;
+    final localPosition = renderBox.globalToLocal(details.globalPosition);
+    
+    final relativeX = (localPosition.dx - _imageDisplayRect.left) / _imageDisplayRect.width;
+    final relativeY = (localPosition.dy - _imageDisplayRect.top) / _imageDisplayRect.height;
 
     CropRect newCrop;
 
@@ -610,6 +613,45 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
     _activeHandle = null;
   }
 
+  void _handleCropAreaPanStart(DragStartDetails details) {
+    // Start dragging the whole crop area when user drags inside overlay (not on handles).
+    _dragStartLocalPos = details.localPosition;
+    _dragStartCrop = _localCrop;
+    widget.controller.saveCurrentAsPrevious();
+  }
+
+  void _handleCropAreaPanUpdate(DragUpdateDetails details, Size availableSize) {
+    if (_dragStartLocalPos == null || _activeHandle != null) return;
+
+    final delta = details.localPosition - _dragStartLocalPos!;
+
+    // Convert pixel delta into normalized delta based on display rect.
+    final dxNorm = delta.dx / _imageDisplayRect.width;
+    final dyNorm = delta.dy / _imageDisplayRect.height;
+
+    var newX = (_dragStartCrop.x + dxNorm).clamp(0.0, 1.0 - _dragStartCrop.width);
+    var newY = (_dragStartCrop.y + dyNorm).clamp(0.0, 1.0 - _dragStartCrop.height);
+
+    final newCrop = CropRect(
+      x: newX,
+      y: newY,
+      width: _dragStartCrop.width,
+      height: _dragStartCrop.height,
+    );
+
+    if (mounted) {
+      setState(() {
+        _localCrop = newCrop;
+      });
+    }
+    widget.controller.setCropRect(newCrop);
+    widget.onCropChanged(newCrop);
+  }
+
+  void _handleCropAreaPanEnd(DragEndDetails details) {
+    _dragStartLocalPos = null;
+  }
+
   void _handleScaleUpdate(ScaleUpdateDetails details) {
     if (details.scale != 1.0) {
       setState(() {
@@ -625,67 +667,78 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
 
   @override
   Widget build(BuildContext context) {
-    final screenSize = MediaQuery.of(context).size;
-    _calculateDisplayRect(screenSize);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableSize = Size(constraints.maxWidth, constraints.maxHeight);
+        _calculateDisplayRect(availableSize);
 
-    final cropScreenRect = Rect.fromLTWH(
-      _imageDisplayRect.left + _localCrop.x * _imageDisplayRect.width,
-      _imageDisplayRect.top + _localCrop.y * _imageDisplayRect.height,
-      _localCrop.width * _imageDisplayRect.width,
-      _localCrop.height * _imageDisplayRect.height,
-    );
+        final cropScreenRect = Rect.fromLTWH(
+          _imageDisplayRect.left + _localCrop.x * _imageDisplayRect.width,
+          _imageDisplayRect.top + _localCrop.y * _imageDisplayRect.height,
+          _localCrop.width * _imageDisplayRect.width,
+          _localCrop.height * _imageDisplayRect.height,
+        );
 
-    return Stack(
-      children: [
-        // Image with zoom
-        Center(
-          child: Transform(
-            transform: Matrix4.identity()
-              ..translate(_offset.dx, _offset.dy)
-              ..scale(_scale),
-            child: Image.file(File(widget.imagePath), fit: BoxFit.contain),
-          ),
-        ),
-
-        // Crop overlay
-        Positioned.fill(
-          child: GestureDetector(
-            onScaleUpdate: _handleScaleUpdate,
-            child: CustomPaint(
-              painter: _CropOverlayPainter(
-                cropScreenRect: cropScreenRect,
-                showGrid: widget.controller.showGrid,
+        return Stack(
+          children: [
+            // Image with zoom
+            Center(
+              child: Transform(
+                alignment: Alignment.center,
+                transform: Matrix4.identity()
+                  ..translate(_offset.dx, _offset.dy)
+                  ..scale(_scale),
+                child: RotatedBox(
+                  quarterTurns: (widget.rotation / 90).round(),
+                  child: Image.file(File(widget.imagePath), fit: BoxFit.contain),
+                ),
               ),
             ),
-          ),
-        ),
 
-        // Corner handles
-        _CropHandle(
-          position: Offset(cropScreenRect.left, cropScreenRect.top),
-          onDragStart: (details) => _handleDragStart(details, 'topLeft'),
-          onDragUpdate: _handleDragUpdate,
-          onDragEnd: _handleDragEnd,
-        ),
-        _CropHandle(
-          position: Offset(cropScreenRect.right, cropScreenRect.top),
-          onDragStart: (details) => _handleDragStart(details, 'topRight'),
-          onDragUpdate: _handleDragUpdate,
-          onDragEnd: _handleDragEnd,
-        ),
-        _CropHandle(
-          position: Offset(cropScreenRect.left, cropScreenRect.bottom),
-          onDragStart: (details) => _handleDragStart(details, 'bottomLeft'),
-          onDragUpdate: _handleDragUpdate,
-          onDragEnd: _handleDragEnd,
-        ),
-        _CropHandle(
-          position: Offset(cropScreenRect.right, cropScreenRect.bottom),
-          onDragStart: (details) => _handleDragStart(details, 'bottomRight'),
-          onDragUpdate: _handleDragUpdate,
-          onDragEnd: _handleDragEnd,
-        ),
-      ],
+            // Crop overlay
+            Positioned.fill(
+              child: GestureDetector(
+                onScaleUpdate: _handleScaleUpdate,
+                onPanStart: _handleCropAreaPanStart,
+                onPanUpdate: (details) => _handleCropAreaPanUpdate(details, availableSize),
+                onPanEnd: _handleCropAreaPanEnd,
+                child: CustomPaint(
+                  painter: _CropOverlayPainter(
+                    cropScreenRect: cropScreenRect,
+                    showGrid: widget.controller.showGrid,
+                  ),
+                ),
+              ),
+            ),
+
+            // Corner handles
+            _CropHandle(
+              position: Offset(cropScreenRect.left, cropScreenRect.top),
+              onDragStart: (details) => _handleDragStart(details, 'topLeft'),
+              onDragUpdate: (details) => _handleDragUpdate(details, availableSize),
+              onDragEnd: _handleDragEnd,
+            ),
+            _CropHandle(
+              position: Offset(cropScreenRect.right, cropScreenRect.top),
+              onDragStart: (details) => _handleDragStart(details, 'topRight'),
+              onDragUpdate: (details) => _handleDragUpdate(details, availableSize),
+              onDragEnd: _handleDragEnd,
+            ),
+            _CropHandle(
+              position: Offset(cropScreenRect.left, cropScreenRect.bottom),
+              onDragStart: (details) => _handleDragStart(details, 'bottomLeft'),
+              onDragUpdate: (details) => _handleDragUpdate(details, availableSize),
+              onDragEnd: _handleDragEnd,
+            ),
+            _CropHandle(
+              position: Offset(cropScreenRect.right, cropScreenRect.bottom),
+              onDragStart: (details) => _handleDragStart(details, 'bottomRight'),
+              onDragUpdate: (details) => _handleDragUpdate(details, availableSize),
+              onDragEnd: _handleDragEnd,
+            ),
+          ],
+        );
+      },
     );
   }
 }

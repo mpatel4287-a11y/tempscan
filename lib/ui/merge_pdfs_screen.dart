@@ -1,7 +1,6 @@
 // ignore_for_file: prefer_final_fields, deprecated_member_use
 
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:pdf/pdf.dart';
@@ -20,13 +19,11 @@ class MergePdfsScreen extends StatefulWidget {
 }
 
 class _MergePdfsScreenState extends State<MergePdfsScreen> {
-  List<File> _selectedPdfs = [];
+  final List<File> _selectedPdfs = [];
   bool _isProcessing = false;
   String? _customFileName;
-  String? _selectedSavePath;
-  Directory? _customSaveDirectory;
   bool _addWatermark = true;
-  String _watermarkText = 'TempScan';
+  String _watermarkText = 'TempScan Secure';
 
   Future<void> _pickPdfs() async {
     try {
@@ -37,31 +34,51 @@ class _MergePdfsScreenState extends State<MergePdfsScreen> {
       );
 
       if (result != null) {
-        setState(() {
-          final newPdfs = result.files
-              .map((file) => File(file.path!))
-              .where(
-                (pdf) =>
-                    !_selectedPdfs.any((existing) => existing.path == pdf.path),
-              )
-              .toList();
-          _selectedPdfs.addAll(newPdfs);
-        });
+        for (final file in result.files) {
+          final pdfFile = File(file.path!);
+          
+          // Check if PDF is password protected early
+          try {
+            final pdfDoc = await pdfx.PdfDocument.openFile(pdfFile.path);
+            await pdfDoc.close();
+          } catch (e) {
+            final errorMessage = e.toString().toLowerCase();
+            final isPasswordError = errorMessage.contains('password') || 
+                                   errorMessage.contains('encrypted') || 
+                                   errorMessage.contains('11') ||
+                                   errorMessage.contains('not authenticated');
+            
+            if (isPasswordError) {
+              final password = await _showPasswordPromptDialog();
+              if (password != null) {
+                try {
+                  final pdfDoc = await pdfx.PdfDocument.openFile(pdfFile.path, password: password);
+                  await pdfDoc.close();
+                } catch (innerE) {
+                  if (mounted) _showError('Incorrect password for ${file.name}');
+                  continue; // Skip this file
+                }
+              } else {
+                continue; // User cancelled password prompt for this file
+              }
+            }
+          }
+
+          if (!_selectedPdfs.any((existing) => existing.path == pdfFile.path)) {
+            setState(() => _selectedPdfs.add(pdfFile));
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error picking PDFs: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent));
       }
     }
   }
 
   Future<void> _mergePdfs() async {
     if (_selectedPdfs.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select at least 2 PDFs to merge')),
-      );
+      _showError('Select at least 2 PDFs to merge');
       return;
     }
 
@@ -70,16 +87,40 @@ class _MergePdfsScreenState extends State<MergePdfsScreen> {
     try {
       final pdf = pw.Document();
 
-      // Load and copy pages from each PDF using pdfx for reading
       for (final pdfFile in _selectedPdfs) {
-        final pdfDoc = await pdfx.PdfDocument.openFile(pdfFile.path);
+        pdfx.PdfDocument? pdfDoc;
+        try {
+          pdfDoc = await pdfx.PdfDocument.openFile(pdfFile.path);
+        } catch (e) {
+          final errorMessage = e.toString().toLowerCase();
+          final isPasswordError = errorMessage.contains('password') || 
+                                 errorMessage.contains('encrypted') || 
+                                 errorMessage.contains('11') ||
+                                 errorMessage.contains('not authenticated');
+          
+          if (isPasswordError) {
+            final password = await _showPasswordPromptDialog();
+            if (password != null) {
+              try {
+                pdfDoc = await pdfx.PdfDocument.openFile(pdfFile.path, password: password);
+              } catch (innerE) {
+                rethrow;
+              }
+            } else {
+              setState(() => _isProcessing = false);
+              return;
+            }
+          } else {
+            rethrow;
+          }
+        }
+        
 
-        // Copy all pages from the loaded PDF
         for (int i = 0; i < pdfDoc.pagesCount; i++) {
           final page = await pdfDoc.getPage(i + 1);
           final pageImage = await page.render(
-            width: page.width,
-            height: page.height,
+            width: page.width * 2,
+            height: page.height * 2,
             format: pdfx.PdfPageImageFormat.png,
           );
 
@@ -87,187 +128,74 @@ class _MergePdfsScreenState extends State<MergePdfsScreen> {
             pdf.addPage(
               pw.Page(
                 pageFormat: PdfPageFormat(page.width, page.height),
+                margin: pw.EdgeInsets.zero,
                 build: (context) {
-                  return pw.Center(
-                    child: pw.Image(
-                      pw.MemoryImage(pageImage.bytes),
-                      fit: pw.BoxFit.contain,
-                    ),
+                  return pw.Stack(
+                    children: [
+                      pw.Center(
+                        child: pw.Image(pw.MemoryImage(pageImage.bytes), fit: pw.BoxFit.contain),
+                      ),
+                      if (_addWatermark)
+                        pw.Positioned(
+                          bottom: 20,
+                          right: 20,
+                          child: pw.Opacity(
+                            opacity: 0.3,
+                            child: pw.Text(
+                              _watermarkText,
+                              style: pw.TextStyle(
+                                fontSize: 14,
+                                color: PdfColors.grey700,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   );
                 },
               ),
             );
           }
-
-          // Close the page to free resources
           await page.close();
         }
-
-        // Close the document to free resources
         await pdfDoc.close();
       }
 
-      // Determine save location using SettingsService
       final directoryPath = await SettingsService.getOrPickSavePath();
       if (directoryPath == null) {
         if (mounted) setState(() => _isProcessing = false);
         return;
       }
-      final directory = Directory(directoryPath);
-      if (!await directory.exists()) {
-        await directory.create(recursive: true);
-      }
 
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final fileName = (_customFileName ?? 'Merged_$timestamp').endsWith('.pdf')
-          ? (_customFileName ?? 'Merged_$timestamp')
-          : '${_customFileName ?? 'Merged_$timestamp'}.pdf';
-      final filePath = '${directory.path}/$fileName';
-
+      final fileName = (_customFileName ?? 'Merged').endsWith('.pdf') ? _customFileName! : '${_customFileName ?? 'Merged'}.pdf';
+      final filePath = '$directoryPath/$fileName';
       final outputFile = File(filePath);
-      final pdfBytes = await pdf.save();
-
-      // Add watermark if enabled
-      if (_addWatermark) {
-        final watermarkedBytes = await _addWatermarkToPdf(
-          pdfBytes,
-          _watermarkText,
-        );
-        await outputFile.writeAsBytes(watermarkedBytes);
-      } else {
-        await outputFile.writeAsBytes(pdfBytes);
-      }
+      
+      await outputFile.writeAsBytes(await pdf.save());
 
       if (!mounted) return;
-
       setState(() => _isProcessing = false);
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PdfSuccessScreen(pdfFile: outputFile),
-        ),
-      );
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => PdfSuccessScreen(pdfFile: outputFile)));
     } catch (e) {
       if (!mounted) return;
       setState(() => _isProcessing = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error merging PDFs: $e')));
+      _showError('Merge failed: $e');
     }
   }
 
-  Future<Uint8List> _addWatermarkToPdf(
-    Uint8List pdfBytes,
-    String watermark,
-  ) async {
-    // For watermark, we use the pdf package's built-in functionality
-    // to create a new PDF with the watermark overlay
-    final outputDoc = pw.Document();
-
-    // Use pdfx to read the original PDF and render pages with watermark
-    final inputDoc = await pdfx.PdfDocument.openData(pdfBytes);
-
-    for (int i = 0; i < inputDoc.pagesCount; i++) {
-      final page = await inputDoc.getPage(i + 1);
-      final pageImage = await page.render(
-        width: page.width,
-        height: page.height,
-        format: pdfx.PdfPageImageFormat.png,
-      );
-
-      if (pageImage != null) {
-        outputDoc.addPage(
-          pw.Page(
-            margin: const pw.EdgeInsets.all(40),
-            orientation: pw.PageOrientation.portrait,
-            pageFormat: PdfPageFormat(page.width, page.height),
-            build: (context) {
-              return pw.Stack(
-                children: [
-                  pw.Center(
-                    child: pw.Image(
-                      pw.MemoryImage(pageImage.bytes),
-                      fit: pw.BoxFit.contain,
-                    ),
-                  ),
-                  pw.Positioned.fill(
-                    child: pw.Opacity(
-                      opacity: 0.3,
-                      child: pw.Transform.rotate(
-                        angle: 0.7854,
-                        child: pw.Center(
-                          child: pw.Text(
-                            watermark,
-                            style: pw.TextStyle(
-                              fontSize: 20,
-                              color: PdfColors.grey,
-                              fontWeight: pw.FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        );
-      }
-
-      await page.close();
-    }
-
-    await inputDoc.close();
-
-    return outputDoc.save();
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: Colors.redAccent));
   }
 
-  void _removePdf(int index) {
-    setState(() {
-      _selectedPdfs.removeAt(index);
-    });
-  }
-
-  void _reorderPdfs(int oldIndex, int newIndex) {
-    setState(() {
-      if (newIndex > oldIndex) {
-        newIndex -= 1;
-      }
-      final item = _selectedPdfs.removeAt(oldIndex);
-      _selectedPdfs.insert(newIndex, item);
-    });
-  }
 
   void _showRenameDialog() {
     showDialog(
       context: context,
       builder: (_) => RenameDialog(
-        initialName:
-            _customFileName ??
-            'Merged_${DateTime.now().millisecondsSinceEpoch}',
-        onConfirm: (name) {
-          setState(() {
-            _customFileName = name;
-          });
-        },
-      ),
-    );
-  }
-
-  void _showSaveLocationDialog() {
-    showDialog(
-      context: context,
-      builder: (_) => _SaveLocationDialog(
-        currentPath: _selectedSavePath,
-        customDirectory: _customSaveDirectory,
-        onConfirm: (path, directory) {
-          setState(() {
-            _selectedSavePath = path;
-            _customSaveDirectory = directory;
-          });
-        },
+        initialName: _customFileName ?? 'Merged_${DateTime.now().millisecondsSinceEpoch}',
+        onConfirm: (name) => setState(() => _customFileName = name),
       ),
     );
   }
@@ -278,280 +206,215 @@ class _MergePdfsScreenState extends State<MergePdfsScreen> {
       builder: (_) => _WatermarkDialog(
         initialText: _watermarkText,
         isEnabled: _addWatermark,
-        onConfirm: (text, enabled) {
-          setState(() {
-            _watermarkText = text;
-            _addWatermark = enabled;
-          });
-        },
+        onConfirm: (text, enabled) => setState(() {
+          _watermarkText = text;
+          _addWatermark = enabled;
+        }),
       ),
-    );
-  }
-
-  Widget _buildPdfList() {
-    if (_selectedPdfs.isEmpty) {
-      return GestureDetector(
-        onTap: _pickPdfs,
-        child: Container(
-          height: 150,
-          decoration: BoxDecoration(
-            color: Colors.grey[100],
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey[300]!),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.picture_as_pdf, size: 48, color: Colors.grey[400]),
-              const SizedBox(height: 8),
-              Text(
-                'Tap to select PDFs',
-                style: TextStyle(color: Colors.grey[500]),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Selected PDFs (${_selectedPdfs.length})',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-            TextButton(onPressed: _pickPdfs, child: const Text('Add More')),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ReorderableListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: _selectedPdfs.length,
-          onReorder: _reorderPdfs,
-          itemBuilder: (context, index) {
-            final pdf = _selectedPdfs[index];
-            final fileSize = FileSizeHelper.readable(pdf);
-
-            return Container(
-              key: Key(pdf.path),
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey[200]!),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.red[100],
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(Icons.picture_as_pdf, color: Colors.red[700]),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${index + 1}. ${pdf.path.split('/').last}',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          fileSize,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(
-                      Icons.delete_outline,
-                      color: Colors.grey[500],
-                      size: 20,
-                    ),
-                    onPressed: () => _removePdf(index),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFF0F0F0F),
       appBar: AppBar(
-        title: const Text('Merge PDFs'),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        title: const Text('Merge PDFs', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          if (_selectedPdfs.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: _showRenameDialog,
-              tooltip: 'Rename',
-            ),
-          if (_selectedPdfs.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.folder_open),
-              onPressed: _showSaveLocationDialog,
-              tooltip: 'Save location',
-            ),
-          if (_selectedPdfs.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.water_drop),
-              onPressed: _showWatermarkDialog,
-              tooltip: 'Watermark',
-              color: _addWatermark ? Colors.blue : null,
-            ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () async {
-              final newPath = await SettingsService.getOrPickSavePath(forcePick: true);
-              if (newPath != null && context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Default save location updated to: $newPath')),
-                );
-              }
-            },
-            tooltip: 'Change Default Save Location',
-          ),
+          if (_selectedPdfs.isNotEmpty) ...[
+            IconButton(icon: const Icon(Icons.edit_note), onPressed: _showRenameDialog),
+            IconButton(icon: const Icon(Icons.water_drop_outlined), onPressed: _showWatermarkDialog, color: _addWatermark ? Colors.blueAccent : null),
+          ],
+          IconButton(icon: const Icon(Icons.settings_outlined), onPressed: () => SettingsService.getOrPickSavePath(forcePick: true)),
         ],
       ),
       body: Column(
         children: [
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildPdfList(),
-                  const SizedBox(height: 24),
-                  if (_selectedPdfs.isNotEmpty) ...[
-                    const Text(
-                      'Tips',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
+            child: _selectedPdfs.isEmpty ? _buildEmptyState() : _buildReorderableList(),
+          ),
+          if (_selectedPdfs.isNotEmpty) _buildBottomBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.05), shape: BoxShape.circle),
+            child: Icon(Icons.picture_as_pdf_outlined, size: 64, color: Colors.blueAccent.withValues(alpha: 0.5)),
+          ),
+          const SizedBox(height: 24),
+          const Text('No PDFs selected', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text('Select multiple files to merge them into one.', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+          const SizedBox(height: 32),
+          ElevatedButton.icon(
+            onPressed: _pickPdfs,
+            icon: const Icon(Icons.add),
+            label: const Text('ADD PDFS'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueAccent,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReorderableList() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline, color: Colors.blueAccent, size: 16),
+              const SizedBox(width: 8),
+              Text('Hold and drag to reorder files', style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 12)),
+              const Spacer(),
+              TextButton.icon(onPressed: _pickPdfs, icon: const Icon(Icons.add_circle_outline, size: 16), label: const Text('ADD MORE')),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ReorderableListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            itemCount: _selectedPdfs.length,
+            onReorder: (oldIndex, newIndex) {
+              setState(() {
+                if (newIndex > oldIndex) newIndex -= 1;
+                final item = _selectedPdfs.removeAt(oldIndex);
+                _selectedPdfs.insert(newIndex, item);
+              });
+            },
+            itemBuilder: (context, index) {
+              final pdf = _selectedPdfs[index];
+              return Container(
+                key: Key(pdf.path),
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                ),
+                child: Row(
+                  children: [
                     Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue[50]!,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.blue[200]!),
-                      ),
-                      child: Row(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: Colors.redAccent.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+                      child: const Icon(Icons.picture_as_pdf, color: Colors.redAccent, size: 24),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            Icons.lightbulb_outline,
-                            color: Colors.blue[700]!,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Drag and drop to reorder PDFs. The order shown here will be the order in the merged document.',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.blue[700],
-                              ),
-                            ),
-                          ),
+                          Text(pdf.path.split('/').last, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          const SizedBox(height: 4),
+                          Text(FileSizeHelper.readable(pdf), style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
                         ],
                       ),
                     ),
+                    IconButton(icon: const Icon(Icons.close, color: Colors.white24, size: 20), onPressed: () => setState(() => _selectedPdfs.removeAt(index))),
                   ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: const Color(0xFF1A1A1A), border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.05)))),
+      child: Column(
+        children: [
+          if (_customFileName != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Row(
+                children: [
+                  const Icon(Icons.drive_file_rename_outline, color: Colors.white38, size: 16),
+                  const SizedBox(width: 8),
+                  Text('Output: $_customFileName.pdf', style: const TextStyle(color: Colors.white38, fontSize: 12)),
                 ],
+              ),
+            ),
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFF845EF7), Color(0xFF5C7CFA)]),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: ElevatedButton(
+                onPressed: _isProcessing ? null : _mergePdfs,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: _isProcessing
+                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Text('MERGE ${_selectedPdfs.length} DOCUMENTS', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
               ),
             ),
           ),
-          if (_selectedPdfs.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 8,
-                  ),
-                ],
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _showPasswordPromptDialog() async {
+    String tempPass = '';
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Password Protected', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('A PDF in your selection is encrypted. Enter password to continue.', style: TextStyle(color: Colors.white70, fontSize: 14)),
+            const SizedBox(height: 20),
+            TextField(
+              obscureText: true,
+              style: const TextStyle(color: Colors.white),
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: 'Password',
+                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2)),
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.05),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
               ),
-              child: Column(
-                children: [
-                  if (_customFileName != null || _selectedSavePath != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.description, size: 16),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'File: ${(_customFileName ?? 'Merged')}.pdf',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          if (_selectedSavePath != null)
-                            Text(
-                              'Save: $_selectedSavePath',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: _isProcessing ? null : _mergePdfs,
-                      child: _isProcessing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Text(
-                              _selectedPdfs.length < 2
-                                  ? 'Select at least 2 PDFs'
-                                  : 'Merge ${_selectedPdfs.length} PDFs',
-                              style: const TextStyle(fontSize: 16),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
+              onChanged: (v) => tempPass = v,
+              onSubmitted: (v) => Navigator.pop(context, v),
             ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(onPressed: () => Navigator.pop(context, tempPass), child: const Text('Unlock', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold))),
         ],
       ),
     );
@@ -565,11 +428,7 @@ class _WatermarkDialog extends StatefulWidget {
   final bool isEnabled;
   final Function(String text, bool enabled) onConfirm;
 
-  const _WatermarkDialog({
-    required this.initialText,
-    required this.isEnabled,
-    required this.onConfirm,
-  });
+  const _WatermarkDialog({required this.initialText, required this.isEnabled, required this.onConfirm});
 
   @override
   State<_WatermarkDialog> createState() => __WatermarkDialogState();
@@ -595,40 +454,26 @@ class __WatermarkDialogState extends State<_WatermarkDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Watermark Settings'),
+      backgroundColor: const Color(0xFF1A1A1A),
+      title: const Text('Watermark Settings', style: TextStyle(color: Colors.white)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Checkbox(
-                value: _enabled,
-                onChanged: (value) {
-                  setState(() {
-                    _enabled = value ?? true;
-                  });
-                },
-              ),
-              const Expanded(child: Text('Add watermark')),
-            ],
+          SwitchListTile(
+            title: const Text('Add Watermark', style: TextStyle(color: Colors.white)),
+            value: _enabled,
+            onChanged: (v) => setState(() => _enabled = v),
           ),
-          const SizedBox(height: 8),
           if (_enabled)
             TextField(
               controller: _controller,
-              decoration: const InputDecoration(
-                labelText: 'Watermark text',
-                border: OutlineInputBorder(),
-              ),
-              maxLength: 30,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'Text', labelStyle: TextStyle(color: Colors.white38)),
             ),
         ],
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         ElevatedButton(
           onPressed: () {
             widget.onConfirm(_controller.text.trim(), _enabled);
@@ -641,201 +486,3 @@ class __WatermarkDialogState extends State<_WatermarkDialog> {
   }
 }
 
-/* ---------------- Save Location Dialog ---------------- */
-
-class _SaveLocationDialog extends StatefulWidget {
-  final String? currentPath;
-  final Directory? customDirectory;
-  final Function(String path, Directory? directory) onConfirm;
-
-  const _SaveLocationDialog({
-    this.currentPath,
-    this.customDirectory,
-    required this.onConfirm,
-  });
-
-  @override
-  State<_SaveLocationDialog> createState() => __SaveLocationDialogState();
-}
-
-class __SaveLocationDialogState extends State<_SaveLocationDialog> {
-  String _selectedPath = 'Documents';
-  bool _useCustomLocation = false;
-  Directory? _customSelectedDirectory;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedPath = widget.currentPath ?? 'Documents';
-    _useCustomLocation = widget.customDirectory != null;
-    _customSelectedDirectory = widget.customDirectory;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Save PDF Location'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Choose where to save your PDF:',
-            style: TextStyle(fontSize: 14),
-          ),
-          const SizedBox(height: 16),
-          _locationOption(
-            icon: Icons.folder,
-            label: 'Documents',
-            subtitle: 'Standard documents folder',
-            isSelected: _selectedPath == 'Documents' && !_useCustomLocation,
-            onTap: () {
-              setState(() {
-                _selectedPath = 'Documents';
-                _useCustomLocation = false;
-              });
-            },
-          ),
-          const SizedBox(height: 8),
-          _locationOption(
-            icon: Icons.download,
-            label: 'Downloads',
-            subtitle: 'Downloads folder',
-            isSelected: _selectedPath == 'Downloads' && !_useCustomLocation,
-            onTap: () {
-              setState(() {
-                _selectedPath = 'Downloads';
-                _useCustomLocation = false;
-              });
-            },
-          ),
-          const SizedBox(height: 8),
-          _locationOption(
-            icon: Icons.folder_special,
-            label: 'TempScan',
-            subtitle: 'App-specific folder',
-            isSelected: _selectedPath == 'TempScan' && !_useCustomLocation,
-            onTap: () {
-              setState(() {
-                _selectedPath = 'TempScan';
-                _useCustomLocation = false;
-              });
-            },
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Checkbox(
-                value: _useCustomLocation,
-                onChanged: (value) async {
-                  if (value == true) {
-                    await _pickCustomFolder();
-                  } else {
-                    setState(() {
-                      _useCustomLocation = false;
-                    });
-                  }
-                },
-              ),
-              const Expanded(child: Text('Choose custom folder')),
-              if (_useCustomLocation && _customSelectedDirectory != null)
-                Text(
-                  _customSelectedDirectory!.path.split('/').last,
-                  style: const TextStyle(fontSize: 11, color: Colors.blue),
-                  overflow: TextOverflow.ellipsis,
-                ),
-            ],
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: () {
-            if (_useCustomLocation && _customSelectedDirectory == null) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Please select a folder first')),
-              );
-              return;
-            }
-
-            widget.onConfirm(_selectedPath, _customSelectedDirectory);
-            Navigator.pop(context);
-          },
-          child: const Text('Save'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _pickCustomFolder() async {
-    try {
-      final result = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Select folder to save PDF',
-      );
-
-      if (result != null) {
-        setState(() {
-          _useCustomLocation = true;
-          _selectedPath = 'Custom';
-          _customSelectedDirectory = Directory(result);
-        });
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error selecting folder: $e')));
-    }
-  }
-
-  Widget _locationOption({
-    required IconData icon,
-    required String label,
-    required String subtitle,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(
-          border: Border.all(color: isSelected ? Colors.blue : Colors.black26),
-          borderRadius: BorderRadius.circular(8),
-          color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: isSelected ? Colors.blue : Colors.black54),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontWeight: isSelected
-                          ? FontWeight.w600
-                          : FontWeight.normal,
-                      color: isSelected ? Colors.blue : Colors.black87,
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(fontSize: 11, color: Colors.black54),
-                  ),
-                ],
-              ),
-            ),
-            if (isSelected)
-              const Icon(Icons.check_circle, color: Colors.blue, size: 20),
-          ],
-        ),
-      ),
-    );
-  }
-}

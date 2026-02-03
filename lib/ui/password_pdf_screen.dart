@@ -1,13 +1,15 @@
 // ignore_for_file: deprecated_member_use
 
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
 import 'package:pdfx/pdfx.dart' as pdfx;
+import 'package:syncfusion_flutter_pdf/pdf.dart' as sfpdf;
 import '../utils/file_size_helper.dart';
 import '../services/settings_service.dart';
+import '../services/signature_service.dart'; // Added
 import 'pdf_success_screen.dart';
 import 'rename_dialog.dart';
 import '../camera/camera_screen.dart';
@@ -22,15 +24,29 @@ class PasswordPdfScreen extends StatefulWidget {
 class _PasswordPdfScreenState extends State<PasswordPdfScreen> {
   File? _selectedPdf;
   String? _customFileName;
-  String? _selectedSavePath;
-  Directory? _customSaveDirectory;
-  bool _addWatermark = true;
-  String _watermarkText = 'TempScan';
-  bool _isProcessing = false;
+  bool _addWatermark = false; // Changed default
+  String _watermarkText = 'TempScan'; // Changed default
+  bool _isGenerating = false; // Renamed from _isProcessing
+
+  File? _selectedSignature; // Added
+  ui.Offset _signaturePosition = const ui.Offset(0.7, 0.8); // Added
+  bool _showSignaturePicker = false; // Added
+
   String _password = '';
   String _confirmPassword = '';
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+
+  // Added for password section
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPasswordController = TextEditingController();
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickPdf() async {
     try {
@@ -41,220 +57,189 @@ class _PasswordPdfScreenState extends State<PasswordPdfScreen> {
       );
 
       if (result != null) {
+        final file = File(result.files.single.path!);
+        
+        // Check if PDF is password protected early
+        try {
+          final pdfDoc = await pdfx.PdfDocument.openFile(file.path);
+          await pdfDoc.close();
+        } catch (e) {
+          final errorMessage = e.toString().toLowerCase();
+          final isPasswordError = errorMessage.contains('password') || 
+                                 errorMessage.contains('encrypted') || 
+                                 errorMessage.contains('11') ||
+                                 errorMessage.contains('not authenticated');
+          
+          if (isPasswordError) {
+            final password = await _showPasswordPromptDialog();
+            if (password != null) {
+              try {
+                final pdfDoc = await pdfx.PdfDocument.openFile(file.path, password: password);
+                await pdfDoc.close();
+              } catch (innerE) {
+                if (mounted) _showError('Incorrect password');
+                return;
+              }
+            } else {
+              return; // User cancelled password prompt
+            }
+          }
+        }
+
         setState(() {
-          _selectedPdf = File(result.files.single.path!);
-          _customFileName =
-              'Protected_${DateTime.now().millisecondsSinceEpoch}';
+          _selectedPdf = file;
+          _customFileName = 'Protected_${DateTime.now().millisecondsSinceEpoch}';
         });
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error picking PDF: $e')));
+        _showError('Error picking PDF: $e');
       }
     }
   }
 
   void _scanDocument() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const CameraScreen()),
-    ).then((_) {
-      // If images were scanned, we can create PDF from them
-      setState(() {});
-    });
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const CameraScreen())).then((_) => setState(() {}));
   }
 
   Future<void> _protectPdf() async {
     if (_selectedPdf == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a PDF first')),
-      );
+      _showError('Please select a PDF first');
       return;
     }
 
     if (_password.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please enter a password')));
+      _showError('Please enter a password');
       return;
     }
 
     if (_password != _confirmPassword) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Passwords do not match')));
+      _showError('Passwords do not match');
       return;
     }
 
-    setState(() => _isProcessing = true);
+    setState(() => _isGenerating = true);
 
     try {
-      // Create a password protected PDF document
-      // Use standard PdfEncryption from pdf/pdf.dart (imported at top)
-      final pdf = pw.Document(
-        version: PdfVersion.pdf_1_5,
-        compress: true,
-      );
-      
-      // Inject encryption directly into the low-level PdfDocument if possble
-      // Since pw.Document might not expose it in the constructor in all versions,
-      // and 'pdf.document.encryption' might be final.
-      //
-      // However, checking the library source (common knowledge), PdfDocument has 
-      // 'encryption' parameter. pw.Document typically does not forward it in older versions.
-      // But v3.10 is new.
-      //
-      // Let's try a workaround:
-      // If we can't pass it to constructor, maybe we can hack it?
-      // No.
-      // 
-      // Actually, let's try to use 'author', 'title' etc too?
-      
-      // Re-check pubspec: pdf: ^3.10.7
-      // In 3.10, pw.Document DOES likely not have encryption.
-      // But we can set it on the internal document?
-      // pdf.document.encryption = ...
-      
-      // Let's try:
-      /*
-      // Encryption temporarily disabled due to dependency issues
-      if (_password.isNotEmpty) {
-         try {
-           // pdf.document.encryption = PdfStandardEncryption(
-           //   user: _password,
-           //   owner: _password,
-           // );
-         } catch (e) {
-           debugPrint('Encryption error: $e');
-         }
-      }
-      */
-      
-      if (_password.isNotEmpty) {
-        if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(
-             const SnackBar(
-               content: Text('Encryption is temporarily unavailable. Saving without password.'),
-               duration: Duration(seconds: 5),
-               backgroundColor: Colors.orange,
-             ),
-           );
+      // Open original PDF (handling password-protected inputs too).
+      pdfx.PdfDocument? pdfDoc;
+      try {
+        pdfDoc = await pdfx.PdfDocument.openFile(_selectedPdf!.path);
+      } catch (e) {
+        // If it's a password error, prompt the user
+        final errorMessage = e.toString().toLowerCase();
+        if (errorMessage.contains('password') || errorMessage.contains('encrypted') || errorMessage.contains('11')) {
+          final password = await _showPasswordPromptDialog();
+          if (password != null) {
+            try {
+              pdfDoc = await pdfx.PdfDocument.openFile(_selectedPdf!.path, password: password);
+            } catch (innerE) {
+              rethrow;
+            }
+          } else {
+            setState(() => _isGenerating = false);
+            return;
+          }
+        } else {
+          rethrow;
         }
       }
 
-      // Load original PDF using pdfx
-      final pdfDoc = await pdfx.PdfDocument.openFile(_selectedPdf!.path);
+      
 
-      // Iterate through all pages
+      // Pre-load signature bytes if selected
+      Uint8List? sigBytes;
+      if (_selectedSignature != null) {
+        sigBytes = await _selectedSignature!.readAsBytes();
+      }
+
+      // Build encrypted PDF with Syncfusion.
+      final secureDoc = sfpdf.PdfDocument();
+
       for (int i = 0; i < pdfDoc.pagesCount; i++) {
         final page = await pdfDoc.getPage(i + 1);
         final pageImage = await page.render(
-          width: page.width,
-          height: page.height,
+          width: page.width * 2, // Better quality
+          height: page.height * 2,
           format: pdfx.PdfPageImageFormat.png,
         );
 
         if (pageImage != null) {
-          pdf.addPage(
-            pw.Page(
-              pageFormat: PdfPageFormat(page.width, page.height),
-              build: (context) {
-                return pw.Stack(
-                  children: [
-                    pw.Center(
-                      child: pw.Image(
-                        pw.MemoryImage(pageImage.bytes),
-                        fit: pw.BoxFit.contain,
-                      ),
-                    ),
-                    if (_addWatermark)
-                      pw.Positioned.fill(
-                        child: pw.Opacity(
-                          opacity: 0.3,
-                          child: pw.Transform.rotate(
-                            angle: 0.7854,
-                            child: pw.Center(
-                              child: pw.Text(
-                                _watermarkText,
-                                style: pw.TextStyle(
-                                  fontSize: 40,
-                                  color: PdfColors.grey,
-                                  fontWeight: pw.FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
+          final sfPage = secureDoc.pages.add();
+          final pageSize = sfPage.getClientSize();
+          final img = sfpdf.PdfBitmap(pageImage.bytes);
+
+          // Draw original page content as bitmap.
+          sfPage.graphics.drawImage(
+            img,
+            ui.Rect.fromLTWH(0, 0, pageSize.width, pageSize.height),
           );
+
+          // Optional watermark.
+          if (_addWatermark && _watermarkText.isNotEmpty) {
+            final fmt = sfpdf.PdfStringFormat()
+              ..alignment = sfpdf.PdfTextAlignment.right
+              ..lineAlignment = sfpdf.PdfVerticalAlignment.bottom;
+
+            sfPage.graphics.drawString(
+              _watermarkText,
+              sfpdf.PdfStandardFont(sfpdf.PdfFontFamily.helvetica, 12),
+              bounds: ui.Rect.fromLTWH(0, 0, pageSize.width - 20, pageSize.height - 20),
+              brush: sfpdf.PdfSolidBrush(sfpdf.PdfColor(120, 120, 120)),
+              format: fmt,
+            );
+          }
+
+          // Optional signature image.
+          if (_selectedSignature != null && sigBytes != null) {
+            final sigImg = sfpdf.PdfBitmap(sigBytes);
+            const sigW = 80.0;
+            const sigH = 50.0;
+            final sigX = _signaturePosition.dx * (pageSize.width - sigW);
+            final sigY = _signaturePosition.dy * (pageSize.height - sigH);
+
+            sfPage.graphics.drawImage(
+              sigImg,
+              ui.Rect.fromLTWH(sigX, sigY, sigW, sigH),
+            );
+          }
         }
+
         await page.close();
       }
       await pdfDoc.close();
 
-      // Determine save location using SettingsService
+      // Apply password protection.
+      secureDoc.security.userPassword = _password;
+      secureDoc.security.ownerPassword = _password;
+
       final directoryPath = await SettingsService.getOrPickSavePath();
       if (directoryPath == null) {
-        if (mounted) setState(() => _isProcessing = false);
+        if (mounted) setState(() => _isGenerating = false);
         return;
       }
-      final directory = Directory(directoryPath);
-      if (!await directory.exists()) {
-        await directory.create(recursive: true);
-      }
 
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final fileName =
-          (_customFileName ?? 'Protected_$timestamp').endsWith('.pdf')
-              ? (_customFileName ?? 'Protected_$timestamp')
-              : '${_customFileName ?? 'Protected_$timestamp'}.pdf';
-      final filePath = '${directory.path}/$fileName';
-
+      final fileName = (_customFileName ?? 'Protected').endsWith('.pdf') ? _customFileName! : '${_customFileName ?? 'Protected'}.pdf';
+      final filePath = '$directoryPath/$fileName';
       final outputFile = File(filePath);
-      
-      // Save with encryption (passing standard PdfEncryption to save is not supported in pw.Document?)
-      // Wait, standard pdf package (v3.10) typically uses Document(encryption: ...) or similar.
-      // But if pw.Document doesn't expose it?
-      // Actually, let's try to use the low-level PdfDocument if needed, but we need pw widgets.
-      // Let's rely on PdfDocument constructor if we were using pdf.dart directly.
-      // pw.Document usually forwards params. Let's try to pass it to the constructor.
-      
-      // We will move this to the creation of 'pdf' variable.
-      
-      final encryptedBytes = await pdf.save();
-      
-      await outputFile.writeAsBytes(encryptedBytes);
+
+      final bytes = secureDoc.saveSync();
+      secureDoc.dispose();
+      await outputFile.writeAsBytes(bytes);
 
       if (!mounted) return;
+      setState(() => _isGenerating = false);
 
-      setState(() => _isProcessing = false);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('PDF protected successfully!'),
-          duration: Duration(seconds: 3),
-        ),
-      );
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PdfSuccessScreen(pdfFile: outputFile),
-        ),
-      );
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => PdfSuccessScreen(pdfFile: outputFile)));
     } catch (e) {
       if (!mounted) return;
-      setState(() => _isProcessing = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error protecting PDF: $e')));
+      setState(() => _isGenerating = false);
+      _showError('Error protecting PDF: $e');
     }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: Colors.redAccent));
   }
 
   void _showRenameDialog() {
@@ -273,21 +258,6 @@ class _PasswordPdfScreenState extends State<PasswordPdfScreen> {
     );
   }
 
-  void _showSaveLocationDialog() {
-    showDialog(
-      context: context,
-      builder: (_) => _SaveLocationDialog(
-        currentPath: _selectedSavePath,
-        customDirectory: _customSaveDirectory,
-        onConfirm: (path, directory) {
-          setState(() {
-            _selectedSavePath = path;
-            _customSaveDirectory = directory;
-          });
-        },
-      ),
-    );
-  }
 
   void _showWatermarkDialog() {
     showDialog(
@@ -312,108 +282,72 @@ class _PasswordPdfScreenState extends State<PasswordPdfScreen> {
           GestureDetector(
             onTap: _pickPdf,
             child: Container(
-              height: 120,
+              height: 180,
+              width: double.infinity,
               decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey[300]!),
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 2, style: BorderStyle.solid),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.picture_as_pdf, size: 40, color: Colors.grey[400]),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap to select PDF',
-                    style: TextStyle(color: Colors.grey[500]),
-                  ),
+                  Icon(Icons.add_circle_outline, size: 48, color: Colors.blueAccent.withValues(alpha: 0.5)),
+                  const SizedBox(height: 16),
+                  const Text('Select PDF to Protect', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 16),
+          const Text('OR', style: TextStyle(color: Colors.white24, fontSize: 12, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
-            child: ElevatedButton.icon(
+            child: OutlinedButton.icon(
               onPressed: _scanDocument,
-              icon: const Icon(Icons.document_scanner),
+              icon: const Icon(Icons.camera_alt_outlined),
               label: const Text('Scan New Document'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.all(16),
+                foregroundColor: Colors.white70,
+                side: const BorderSide(color: Colors.white10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
             ),
           ),
         ],
       );
     }
 
-    final fileSize = FileSizeHelper.readable(_selectedPdf!);
-
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.grey[50],
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey[200]!),
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.blueAccent.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.blueAccent.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.picture_as_pdf, color: Colors.blueAccent, size: 32),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.red[100],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  Icons.picture_as_pdf,
-                  color: Colors.red[700],
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _selectedPdf!.path.split('/').last,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      fileSize,
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                icon: Icon(Icons.delete_outline, color: Colors.grey[500]),
-                onPressed: () {
-                  setState(() {
-                    _selectedPdf = null;
-                    _customFileName = null;
-                  });
-                },
-              ),
-            ],
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_selectedPdf!.path.split('/').last, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 4),
+                Text(FileSizeHelper.readable(_selectedPdf!), style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12)),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 16),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: _pickPdf,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Change PDF'),
-          ),
-        ),
-      ],
+          IconButton(icon: const Icon(Icons.close, color: Colors.white38), onPressed: () => setState(() => _selectedPdf = null)),
+        ],
+      ),
     );
   }
 
@@ -421,68 +355,34 @@ class _PasswordPdfScreenState extends State<PasswordPdfScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Set Password',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        const Text('Set Protection Password', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 16),
+        _buildTextField(
+          label: 'Encryption Password',
+          hint: 'Enter strong password',
+          icon: Icons.lock_outline,
+          obscure: _obscurePassword,
+          onChanged: (v) => _password = v,
+          onToggle: () => setState(() => _obscurePassword = !_obscurePassword),
         ),
-        const SizedBox(height: 12),
-        TextField(
-          obscureText: _obscurePassword,
-          onChanged: (value) => _password = value,
-          decoration: InputDecoration(
-            labelText: 'Password',
-            border: const OutlineInputBorder(),
-            prefixIcon: const Icon(Icons.lock_outline),
-            suffixIcon: IconButton(
-              icon: Icon(
-                _obscurePassword ? Icons.visibility_off : Icons.visibility,
-              ),
-              onPressed: () {
-                setState(() => _obscurePassword = !_obscurePassword);
-              },
-            ),
-          ),
+        const SizedBox(height: 16),
+        _buildTextField(
+          label: 'Confirm Password',
+          hint: 'Repeat password',
+          icon: Icons.lock_person_outlined,
+          obscure: _obscureConfirmPassword,
+          onChanged: (v) => _confirmPassword = v,
+          onToggle: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
         ),
-        const SizedBox(height: 12),
-        TextField(
-          obscureText: _obscureConfirmPassword,
-          onChanged: (value) => _confirmPassword = value,
-          decoration: InputDecoration(
-            labelText: 'Confirm Password',
-            border: const OutlineInputBorder(),
-            prefixIcon: const Icon(Icons.lock),
-            suffixIcon: IconButton(
-              icon: Icon(
-                _obscureConfirmPassword
-                    ? Icons.visibility_off
-                    : Icons.visibility,
-              ),
-              onPressed: () {
-                setState(
-                  () => _obscureConfirmPassword = !_obscureConfirmPassword,
-                );
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 20),
         Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.amber[50]!,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.amber[200]!),
-          ),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: Colors.orangeAccent.withOpacity(0.05), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.orangeAccent.withOpacity(0.1))),
           child: Row(
             children: [
-              Icon(Icons.info_outline, color: Colors.amber[700], size: 20),
+              const Icon(Icons.info_outline, color: Colors.orangeAccent, size: 20),
               const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'The password will be required to open this PDF.',
-                  style: TextStyle(fontSize: 12, color: Colors.amber[700]),
-                ),
-              ),
+              const Expanded(child: Text('This password will be required every time the PDF is opened.', style: TextStyle(color: Colors.orangeAccent, fontSize: 12))),
             ],
           ),
         ),
@@ -490,129 +390,275 @@ class _PasswordPdfScreenState extends State<PasswordPdfScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text('Password PDF'),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        elevation: 0,
-        actions: [
-          if (_selectedPdf != null)
-            IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: _showRenameDialog,
-              tooltip: 'Rename',
+  Widget _buildTextField({required String label, required String hint, required IconData icon, required bool obscure, required Function(String) onChanged, required VoidCallback onToggle}) {
+    return TextField(
+      obscureText: obscure,
+      onChanged: onChanged,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white38),
+        hintText: hint,
+        hintStyle: const TextStyle(color: Colors.white12),
+        prefixIcon: Icon(icon, color: Colors.white38),
+        suffixIcon: IconButton(icon: Icon(obscure ? Icons.visibility_off : Icons.visibility, color: Colors.white38), onPressed: onToggle),
+        filled: true,
+        fillColor: Colors.white.withValues(alpha: 0.05),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Colors.blueAccent)),
+      ),
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: const Color(0xFF1A1A1A), border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05)))),
+      child: Column(
+        children: [
+          if (_customFileName != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Row(
+                children: [
+                  const Icon(Icons.drive_file_rename_outline, color: Colors.white38, size: 16),
+                  const SizedBox(width: 8),
+                  Text('Output: $_customFileName.pdf', style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                ],
+              ),
             ),
-          if (_selectedPdf != null)
-            IconButton(
-              icon: const Icon(Icons.folder_open),
-              onPressed: _showSaveLocationDialog,
-              tooltip: 'Save location',
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFFFA709A), Color(0xFFFEE140)]),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: ElevatedButton(
+                onPressed: _isGenerating ? null : _protectPdf, // Changed from _isProcessing
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: _isGenerating // Changed from _isProcessing
+                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('ENCRYPT & SAVE PDF', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+              ),
             ),
-          if (_selectedPdf != null)
-            IconButton(
-              icon: const Icon(Icons.water_drop),
-              onPressed: _showWatermarkDialog,
-              tooltip: 'Watermark',
-              color: _addWatermark ? Colors.blue : null,
-            ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () async {
-              final newPath = await SettingsService.getOrPickSavePath(forcePick: true);
-              if (newPath != null && context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Default save location updated to: $newPath')),
-                );
-              }
-            },
-            tooltip: 'Change Default Save Location',
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    );
+  }
+
+  Widget _buildHeader() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Lock your documents', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text('Add protection to your PDF files instantly.', style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 14)),
+      ],
+    );
+  }
+
+  Widget _buildSignatureSetup() {
+    if (_selectedSignature == null) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 32),
+        const Text('Signature Position', style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white.withOpacity(0.05))),
+          child: Column(
+            children: [
+              Row(
                 children: [
-                  const Text(
-                    'Select a document to protect',
-                    style: TextStyle(fontSize: 14, color: Colors.black54),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildPdfPreview(),
-                  if (_selectedPdf != null) ...[
-                    const SizedBox(height: 24),
-                    _buildPasswordSection(),
-                  ],
+                  Container(width: 60, height: 40, color: Colors.white, child: Image.file(_selectedSignature!, fit: BoxFit.contain)),
+                  const SizedBox(width: 16),
+                  const Expanded(child: Text('Position signature by dragging sliders below', style: TextStyle(color: Colors.white70, fontSize: 12))),
+                  IconButton(icon: const Icon(Icons.close, color: Colors.redAccent, size: 20), onPressed: () => setState(() => _selectedSignature = null)),
                 ],
               ),
-            ),
+              const SizedBox(height: 16),
+              _buildSlider('Horizontal', _signaturePosition.dx, (v) => setState(() => _signaturePosition = ui.Offset(v, _signaturePosition.dy))),
+              _buildSlider('Vertical', _signaturePosition.dy, (v) => setState(() => _signaturePosition = ui.Offset(_signaturePosition.dx, v))),
+            ],
           ),
-          if (_selectedPdf != null)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 8,
-                  ),
-                ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSlider(String label, double val, ValueChanged<double> onCh) {
+    return Row(
+      children: [
+        SizedBox(width: 70, child: Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11))),
+        Expanded(child: Slider(value: val, onChanged: onCh, activeColor: Colors.blueAccent, inactiveColor: Colors.white10)),
+      ],
+    );
+  }
+
+  Future<String?> _showPasswordPromptDialog() async {
+    String tempPass = '';
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Password Protected', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('This PDF is encrypted. Enter password to continue.', style: TextStyle(color: Colors.white70, fontSize: 14)),
+            const SizedBox(height: 20),
+            TextField(
+              obscureText: true,
+              style: const TextStyle(color: Colors.white),
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: 'Password',
+                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2)),
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.05),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
               ),
-              child: Column(
-                children: [
-                  if (_customFileName != null || _selectedSavePath != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.description, size: 16),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'File: ${(_customFileName ?? 'Protected')}.pdf',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          if (_selectedSavePath != null)
-                            Text(
-                              'Save: $_selectedSavePath',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
+              onChanged: (v) => tempPass = v,
+              onSubmitted: (v) => Navigator.pop(context, v),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(onPressed: () => Navigator.pop(context, tempPass), child: const Text('Unlock', style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold))),
+        ],
+      ),
+    );
+  }
+
+  void _showSignatureSelection() {
+    setState(() => _showSignaturePicker = true);
+  }
+
+  Widget _buildSignaturePickerOverlay() {
+    return Positioned.fill( // Changed to Positioned.fill to cover the whole screen
+      child: Container(
+        color: Colors.black87,
+        child: Center(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 24),
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(color: const Color(0xFF1A1A1A), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white10)),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Select Signature', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                    IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => setState(() => _showSignaturePicker = false)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                FutureBuilder<List<File>>(
+                  future: SignatureService.getSavedSignatures(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                      return const Padding(padding: EdgeInsets.symmetric(vertical: 32), child: Text('No saved signatures found', style: TextStyle(color: Colors.white38)));
+                    }
+                    return SizedBox(
+                      height: 200,
+                      child: ListView.builder(
+                        itemCount: snapshot.data!.length,
+                        itemBuilder: (context, index) {
+                          final file = snapshot.data![index];
+                          return InkWell(
+                            onTap: () => setState(() {
+                              _selectedSignature = file;
+                              _showSignaturePicker = false;
+                            }),
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(12)),
+                              child: Row(
+                                children: [
+                                  Container(width: 60, height: 40, color: Colors.white, child: Image.file(file, fit: BoxFit.contain)),
+                                  const SizedBox(width: 16),
+                                  const Text('Signature', style: TextStyle(color: Colors.white)),
+                                ],
                               ),
                             ),
-                        ],
+                          );
+                        },
                       ),
-                    ),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: _isProcessing ? null : _protectPdf,
-                      child: _isProcessing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text(
-                              'Protect PDF',
-                              style: TextStyle(fontSize: 16),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
+                    );
+                  },
+                ),
+              ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0F0F0F),
+      appBar: AppBar(
+        title: const Text('Secure PDF', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          if (_selectedPdf != null) ...[
+            IconButton(icon: const Icon(Icons.edit_note), onPressed: _showRenameDialog, tooltip: 'Rename'),
+            IconButton(icon: const Icon(Icons.water_drop_outlined), onPressed: _showWatermarkDialog, color: _addWatermark ? Colors.blueAccent : null),
+            IconButton(icon: const Icon(Icons.history_edu_rounded), onPressed: _showSignatureSelection, color: _selectedSignature != null ? Colors.blueAccent : null), // Added
+          ],
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () async => await SettingsService.getOrPickSavePath(forcePick: true),
+          ),
+        ],
+      ),
+      body: Stack( // Changed to Stack to allow overlay
+        children: [
+          Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 32),
+                      _buildPdfPreview(),
+                      if (_selectedPdf != null) ...[
+                        const SizedBox(height: 32),
+                        _buildPasswordSection(),
+                        if (_selectedSignature != null) _buildSignatureSetup(), // Added
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              if (_selectedPdf != null) _buildBottomBar(),
+            ],
+          ),
+          if (_showSignaturePicker) _buildSignaturePickerOverlay(), // Added
         ],
       ),
     );
@@ -656,30 +702,32 @@ class __WatermarkDialogState extends State<_WatermarkDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Watermark Settings'),
+      backgroundColor: const Color(0xFF1A1A1A),
+      title: const Text('Watermark Settings', style: TextStyle(color: Colors.white)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Checkbox(
-                value: _enabled,
-                onChanged: (value) {
-                  setState(() {
-                    _enabled = value ?? true;
-                  });
-                },
-              ),
-              const Expanded(child: Text('Add watermark')),
-            ],
+          SwitchListTile(
+            title: const Text('Add Watermark', style: TextStyle(color: Colors.white)),
+            value: _enabled,
+            onChanged: (v) => setState(() => _enabled = v),
+            activeColor: Colors.blueAccent,
+            tileColor: Colors.white.withOpacity(0.05),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 16),
           if (_enabled)
             TextField(
               controller: _controller,
-              decoration: const InputDecoration(
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
                 labelText: 'Watermark text',
-                border: OutlineInputBorder(),
+                labelStyle: const TextStyle(color: Colors.white38),
+                hintStyle: const TextStyle(color: Colors.white12),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.blueAccent)),
               ),
               maxLength: 30,
             ),
@@ -688,13 +736,18 @@ class __WatermarkDialogState extends State<_WatermarkDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
         ),
         ElevatedButton(
           onPressed: () {
             widget.onConfirm(_controller.text.trim(), _enabled);
             Navigator.pop(context);
           },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blueAccent,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
           child: const Text('Save'),
         ),
       ],
@@ -702,201 +755,3 @@ class __WatermarkDialogState extends State<_WatermarkDialog> {
   }
 }
 
-/* ---------------- Save Location Dialog ---------------- */
-
-class _SaveLocationDialog extends StatefulWidget {
-  final String? currentPath;
-  final Directory? customDirectory;
-  final Function(String path, Directory? directory) onConfirm;
-
-  const _SaveLocationDialog({
-    this.currentPath,
-    this.customDirectory,
-    required this.onConfirm,
-  });
-
-  @override
-  State<_SaveLocationDialog> createState() => __SaveLocationDialogState();
-}
-
-class __SaveLocationDialogState extends State<_SaveLocationDialog> {
-  String _selectedPath = 'Documents';
-  bool _useCustomLocation = false;
-  Directory? _customSelectedDirectory;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedPath = widget.currentPath ?? 'Documents';
-    _useCustomLocation = widget.customDirectory != null;
-    _customSelectedDirectory = widget.customDirectory;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Save PDF Location'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Choose where to save your PDF:',
-            style: TextStyle(fontSize: 14),
-          ),
-          const SizedBox(height: 16),
-          _locationOption(
-            icon: Icons.folder,
-            label: 'Documents',
-            subtitle: 'Standard documents folder',
-            isSelected: _selectedPath == 'Documents' && !_useCustomLocation,
-            onTap: () {
-              setState(() {
-                _selectedPath = 'Documents';
-                _useCustomLocation = false;
-              });
-            },
-          ),
-          const SizedBox(height: 8),
-          _locationOption(
-            icon: Icons.download,
-            label: 'Downloads',
-            subtitle: 'Downloads folder',
-            isSelected: _selectedPath == 'Downloads' && !_useCustomLocation,
-            onTap: () {
-              setState(() {
-                _selectedPath = 'Downloads';
-                _useCustomLocation = false;
-              });
-            },
-          ),
-          const SizedBox(height: 8),
-          _locationOption(
-            icon: Icons.folder_special,
-            label: 'TempScan',
-            subtitle: 'App-specific folder',
-            isSelected: _selectedPath == 'TempScan' && !_useCustomLocation,
-            onTap: () {
-              setState(() {
-                _selectedPath = 'TempScan';
-                _useCustomLocation = false;
-              });
-            },
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Checkbox(
-                value: _useCustomLocation,
-                onChanged: (value) async {
-                  if (value == true) {
-                    await _pickCustomFolder();
-                  } else {
-                    setState(() {
-                      _useCustomLocation = false;
-                    });
-                  }
-                },
-              ),
-              const Expanded(child: Text('Choose custom folder')),
-              if (_useCustomLocation && _customSelectedDirectory != null)
-                Text(
-                  _customSelectedDirectory!.path.split('/').last,
-                  style: const TextStyle(fontSize: 11, color: Colors.blue),
-                  overflow: TextOverflow.ellipsis,
-                ),
-            ],
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: () {
-            if (_useCustomLocation && _customSelectedDirectory == null) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Please select a folder first')),
-              );
-              return;
-            }
-
-            widget.onConfirm(_selectedPath, _customSelectedDirectory);
-            Navigator.pop(context);
-          },
-          child: const Text('Save'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _pickCustomFolder() async {
-    try {
-      final result = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Select folder to save PDF',
-      );
-
-      if (result != null) {
-        setState(() {
-          _useCustomLocation = true;
-          _selectedPath = 'Custom';
-          _customSelectedDirectory = Directory(result);
-        });
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error selecting folder: $e')));
-    }
-  }
-
-  Widget _locationOption({
-    required IconData icon,
-    required String label,
-    required String subtitle,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(
-          border: Border.all(color: isSelected ? Colors.blue : Colors.black26),
-          borderRadius: BorderRadius.circular(8),
-          color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: isSelected ? Colors.blue : Colors.black54),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontWeight: isSelected
-                          ? FontWeight.w600
-                          : FontWeight.normal,
-                      color: isSelected ? Colors.blue : Colors.black87,
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(fontSize: 11, color: Colors.black54),
-                  ),
-                ],
-              ),
-            ),
-            if (isSelected)
-              const Icon(Icons.check_circle, color: Colors.blue, size: 20),
-          ],
-        ),
-      ),
-    );
-  }
-}

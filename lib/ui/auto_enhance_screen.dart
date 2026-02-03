@@ -26,27 +26,17 @@ class _AutoEnhanceScreenState extends State<AutoEnhanceScreen> {
 
   Future<void> _pickImages() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.image,
-        allowMultiple: true,
-      );
-
+      final result = await FilePicker.platform.pickFiles(type: FileType.image, allowMultiple: true);
       if (result != null) {
         setState(() {
-          _selectedImages = result.files
-              .map((file) => File(file.path!))
-              .toList();
+          _selectedImages = result.files.map((file) => File(file.path!)).toList();
           _currentIndex = 0;
           _enhancedBytes = null;
           _resetAdjustments();
         });
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error picking images: $e')));
-      }
+      if (mounted) _showError('Pick images error: $e');
     }
   }
 
@@ -59,47 +49,20 @@ class _AutoEnhanceScreenState extends State<AutoEnhanceScreen> {
 
   Future<void> _applyEnhancements() async {
     if (_selectedImages.isEmpty) return;
-
     setState(() => _isProcessing = true);
-
     try {
       await _manager.clearAll();
-
-      for (int i = 0; i < _selectedImages.length; i++) {
-        final image = _selectedImages[i];
-        
-        // Check if we have enhancements to apply
-        // For simplicity in this edit, we re-process to get the enhanced bytes if needed
-        // In a real app we might optimize this to avoid re-processing 
-        
+      for (final image in _selectedImages) {
         final bytes = await image.readAsBytes();
-        
-        // We need to re-apply the current settings to this image
-        // BUT current settings (_brightness, etc) only apply to the current preview image.
-        // This logic implies we apply the *current slider settings* to ALL images?
-        // Or should we process them one by one?
-        // The UI shows Global settings. So we apply global settings to all images.
-        
         final processedBytes = _processImage(bytes);
-        
-        // always save as new temp file
         final tempFile = await _manager.createTempImageFile();
         await tempFile.writeAsBytes(processedBytes);
-        
         _manager.addImage(tempFile);
       }
-
       if (!mounted) return;
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const ReviewScreen()),
-      );
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const ReviewScreen()));
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error enhancing images: $e')));
+      if (mounted) _showError('Enhancement error: $e');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
@@ -108,553 +71,276 @@ class _AutoEnhanceScreenState extends State<AutoEnhanceScreen> {
   Uint8List _processImage(Uint8List imageBytes) {
     img.Image? image = img.decodeImage(imageBytes);
     if (image == null) return imageBytes;
-
-    // Apply brightness and contrast
     if (_brightness != 0 || _contrast != 1.0) {
       image = _adjustBrightnessContrast(image, _brightness, _contrast);
     }
-
-    // Apply sharpness using gaussian blur based approach
-    if (_sharpness > 0) {
-      image = _sharpen(image, _sharpness);
-    }
-
+    if (_sharpness > 0) image = _sharpen(image, _sharpness);
     return Uint8List.fromList(img.encodeJpg(image, quality: 85));
   }
 
-  img.Image _adjustBrightnessContrast(
-    img.Image image,
-    double brightness,
-    double contrast,
-  ) {
-    final factor =
-        (259 * (contrast * 255 + 255)) / (255 * (259 - contrast * 255));
-    final brightnessOffset = brightness;
-
+  img.Image _adjustBrightnessContrast(img.Image image, double brightness, double contrast) {
+    final factor = (259 * (contrast * 255 + 255)) / (255 * (259 - contrast * 255));
     for (final pixel in image) {
-      int r = (factor * (pixel.r + brightnessOffset - 128) + 128).round().clamp(
-        0,
-        255,
-      );
-      int g = (factor * (pixel.g + brightnessOffset - 128) + 128).round().clamp(
-        0,
-        255,
-      );
-      int b = (factor * (pixel.b + brightnessOffset - 128) + 128).round().clamp(
-        0,
-        255,
-      );
-
-      pixel.r = r;
-      pixel.g = g;
-      pixel.b = b;
+      pixel.r = (factor * (pixel.r + brightness - 128) + 128).round().clamp(0, 255);
+      pixel.g = (factor * (pixel.g + brightness - 128) + 128).round().clamp(0, 255);
+      pixel.b = (factor * (pixel.b + brightness - 128) + 128).round().clamp(0, 255);
     }
-
     return image;
   }
 
   img.Image _sharpen(img.Image image, double amount) {
-    // Create a copy for the blurred version
-    final blurred = img.copyResize(
-      image,
-      width: (image.width * 0.5).round(),
-      height: (image.height * 0.5).round(),
-    );
-    final resized = img.copyResize(
-      blurred,
-      width: image.width,
-      height: image.height,
-    );
-
-    final sharpenAmount = amount.clamp(0.0, 5.0);
-
+    final blurred = img.copyResize(image, width: (image.width * 0.5).round(), height: (image.height * 0.5).round());
+    final resized = img.copyResize(blurred, width: image.width, height: image.height);
     for (final pixel in image) {
-      final origR = pixel.r;
-      final origG = pixel.g;
-      final origB = pixel.b;
-
-      final blurR = resized.getPixel(pixel.x, pixel.y).r;
-      final blurG = resized.getPixel(pixel.x, pixel.y).g;
-      final blurB = resized.getPixel(pixel.x, pixel.y).b;
-
-      int r = (origR + (origR - blurR) * sharpenAmount).round().clamp(0, 255);
-      int g = (origG + (origG - blurG) * sharpenAmount).round().clamp(0, 255);
-      int b = (origB + (origB - blurB) * sharpenAmount).round().clamp(0, 255);
-
-      pixel.r = r;
-      pixel.g = g;
-      pixel.b = b;
+      final bP = resized.getPixel(pixel.x, pixel.y);
+      pixel.r = (pixel.r + (pixel.r - bP.r) * amount).round().clamp(0, 255);
+      pixel.g = (pixel.g + (pixel.g - bP.g) * amount).round().clamp(0, 255);
+      pixel.b = (pixel.b + (pixel.b - bP.b) * amount).round().clamp(0, 255);
     }
-
     return image;
   }
 
   void _updatePreview() async {
     if (_selectedImages.isEmpty) return;
-
     try {
       final bytes = await _selectedImages[_currentIndex].readAsBytes();
       final processed = _processImage(bytes);
-
-      setState(() {
-        _enhancedBytes = processed;
-      });
+      setState(() => _enhancedBytes = processed);
     } catch (e) {
-      debugPrint('Error updating preview: $e');
+      debugPrint('Preview error: $e');
     }
   }
 
-  Widget _buildImagePreview() {
-    if (_selectedImages.isEmpty) {
-      return GestureDetector(
-        onTap: _pickImages,
-        child: Container(
-          height: 200,
-          decoration: BoxDecoration(
-            color: Colors.grey[100],
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey[300]!),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.add_photo_alternate,
-                size: 48,
-                color: Colors.grey[400],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Tap to select images',
-                style: TextStyle(color: Colors.grey[500]),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: _pickImages,
-      child: Container(
-        height: 250,
-        decoration: BoxDecoration(
-          color: Colors.grey[100],
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Stack(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: Image.file(
-                      _selectedImages[_currentIndex],
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                  if (_enhancedBytes != null)
-                    Positioned(
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width:
-                          (MediaQuery.of(context).size.width - 32) *
-                          _comparisonPosition,
-                      child: ClipRect(
-                        child: Image.memory(
-                          _enhancedBytes!,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
-            if (_enhancedBytes != null)
-              Positioned(
-                top: 8,
-                left: 8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.compare, color: Colors.white, size: 14),
-                      SizedBox(width: 4),
-                      Text(
-                        'After',
-                        style: TextStyle(color: Colors.white, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            if (_enhancedBytes != null)
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.image, color: Colors.white, size: 14),
-                      SizedBox(width: 4),
-                      Text(
-                        'Before',
-                        style: TextStyle(color: Colors.white, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-            if (_enhancedBytes != null)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 8,
-                child: Center(
-                  child: Container(
-                    width: 200,
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.compare_arrows,
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: SliderTheme(
-                            data: SliderThemeData(
-                              trackHeight: 2,
-                              thumbShape: const RoundSliderThumbShape(
-                                enabledThumbRadius: 8,
-                              ),
-                              activeTrackColor: Colors.white,
-                              inactiveTrackColor: Colors.white30,
-                            ),
-                            child: Slider(
-                              value: _comparisonPosition,
-                              min: 0,
-                              max: 1,
-                              onChanged: (value) {
-                                setState(() => _comparisonPosition = value);
-                              },
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-            Positioned(
-              top: 8,
-              right: _enhancedBytes != null ? 100 : 8,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${_currentIndex + 1}/${_selectedImages.length}',
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                ),
-              ),
-            ),
-
-            if (_selectedImages.length > 1) ...[
-              Positioned(
-                left: 8,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: IconButton(
-                    icon: const Icon(Icons.chevron_left, color: Colors.white),
-                    onPressed: _currentIndex > 0
-                        ? () {
-                            setState(() {
-                              _currentIndex--;
-                              _resetAdjustments();
-                              _enhancedBytes = null;
-                            });
-                          }
-                        : null,
-                  ),
-                ),
-              ),
-              Positioned(
-                right: 8,
-                top: 0,
-                bottom: 0,
-                child: Center(
-                  child: IconButton(
-                    icon: const Icon(Icons.chevron_right, color: Colors.white),
-                    onPressed: _currentIndex < _selectedImages.length - 1
-                        ? () {
-                            setState(() {
-                              _currentIndex++;
-                              _resetAdjustments();
-                              _enhancedBytes = null;
-                            });
-                          }
-                        : null,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  void _showError(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m), backgroundColor: Colors.redAccent));
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFF0F0F0F),
       appBar: AppBar(
-        title: const Text('Auto Enhance'),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        title: const Text('Enhance Tool', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          if (_selectedImages.isNotEmpty)
-            TextButton(onPressed: _pickImages, child: const Text('Change')),
+          if (_selectedImages.isNotEmpty) IconButton(icon: const Icon(Icons.add_photo_alternate_outlined), onPressed: _pickImages),
         ],
       ),
       body: Column(
         children: [
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildImagePreview(),
-                  const SizedBox(height: 24),
+                  _buildPreviewSection(),
                   if (_selectedImages.isNotEmpty) ...[
-                    const Text(
-                      'Quick Presets',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      height: 40,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        children: [
-                          _buildPresetChip('Original', () {
-                            setState(() {
-                              _resetAdjustments();
-                              _enhancedBytes = null;
-                            });
-                          }),
-                          const SizedBox(width: 8),
-                          _buildPresetChip('Document', () {
-                            setState(() {
-                              _brightness = 30;
-                              _contrast = 1.2;
-                              _sharpness = 0.5;
-                            });
-                            _updatePreview();
-                          }),
-                          const SizedBox(width: 8),
-                          _buildPresetChip('Bright', () {
-                            setState(() {
-                              _brightness = 50;
-                              _contrast = 1.0;
-                              _sharpness = 0;
-                            });
-                            _updatePreview();
-                          }),
-                          const SizedBox(width: 8),
-                          _buildPresetChip('Sharp', () {
-                            setState(() {
-                              _brightness = 0;
-                              _contrast = 1.0;
-                              _sharpness = 1.5;
-                            });
-                            _updatePreview();
-                          }),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Manual Adjustments',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _buildSlider(
-                      icon: Icons.brightness_6,
-                      title: 'Brightness',
-                      value: _brightness,
-                      min: -100,
-                      max: 100,
-                      onChanged: (value) {
-                        setState(() => _brightness = value);
-                        _updatePreview();
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    _buildSlider(
-                      icon: Icons.contrast,
-                      title: 'Contrast',
-                      value: _contrast,
-                      min: 0.5,
-                      max: 2.0,
-                      onChanged: (value) {
-                        setState(() => _contrast = value);
-                        _updatePreview();
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    _buildSlider(
-                      icon: Icons.blur_on,
-                      title: 'Sharpness',
-                      value: _sharpness,
-                      min: 0,
-                      max: 3,
-                      onChanged: (value) {
-                        setState(() => _sharpness = value);
-                        _updatePreview();
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _resetAdjustments();
-                            _enhancedBytes = null;
-                          });
-                        },
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Reset All'),
-                      ),
-                    ),
+                    const SizedBox(height: 32),
+                    _buildAdjustmentsSection(),
                   ],
                 ],
               ),
             ),
           ),
-          if (_selectedImages.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 8,
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _isProcessing ? null : _pickImages,
-                      child: const Text('Add More'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _isProcessing ? null : _applyEnhancements,
-                      child: _isProcessing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Apply & Continue'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          if (_selectedImages.isNotEmpty) _buildBottomBar(),
         ],
       ),
     );
   }
 
-  Widget _buildPresetChip(String label, VoidCallback onTap) {
-    return ActionChip(
-      label: Text(label),
-      onPressed: onTap,
-      backgroundColor: Colors.grey[100],
-      labelStyle: const TextStyle(fontSize: 13),
-      padding: EdgeInsets.zero,
-    );
-  }
-
-  Widget _buildSlider({
-    required IconData icon,
-    required String title,
-    required double value,
-    required double min,
-    required double max,
-    required ValueChanged<double> onChanged,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+  Widget _buildPreviewSection() {
+    if (_selectedImages.isEmpty) {
+      return Center(
+        child: Column(
           children: [
-            Icon(icon, size: 20, color: Colors.grey[600]),
-            const SizedBox(width: 8),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            const SizedBox(height: 60),
+            Container(
+              padding: const EdgeInsets.all(32),
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.03), shape: BoxShape.circle),
+              child: Icon(Icons.auto_fix_high_rounded, size: 64, color: Colors.blueAccent.withValues(alpha: 0.5)),
             ),
-            const Spacer(),
-            Text(
-              value.toStringAsFixed(value % 1 == 0 ? 0 : 1),
-              style: const TextStyle(fontSize: 14, color: Colors.grey),
+            const SizedBox(height: 24),
+            const Text('Auto Enhance', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Text('Quickly fix brightness, contrast and sharpness\nacross all selected images.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 14)),
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              onPressed: _pickImages,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('SELECT IMAGES'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
             ),
           ],
         ),
-        Slider(value: value, min: min, max: max, onChanged: onChanged),
+      );
+    }
+
+    return Container(
+      height: 300,
+      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withValues(alpha: 0.1))),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          children: [
+            Positioned.fill(child: Image.file(_selectedImages[_currentIndex], fit: BoxFit.contain)),
+            if (_enhancedBytes != null)
+              Positioned(
+                left: 0, top: 0, bottom: 0,
+                width: (MediaQuery.of(context).size.width - 48) * _comparisonPosition,
+                child: ClipRect(child: Image.memory(_enhancedBytes!, fit: BoxFit.contain)),
+              ),
+            Positioned(
+              left: 0, right: 0, bottom: 16,
+              child: _buildComparisonSlider(),
+            ),
+            Positioned(
+              top: 16, right: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+                child: Text('${_currentIndex + 1}/${_selectedImages.length}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            if (_selectedImages.length > 1) ...[
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildNavBtn(Icons.chevron_left, _currentIndex > 0 ? () => setState(() { _currentIndex--; _enhancedBytes = null; }) : null),
+                      _buildNavBtn(Icons.chevron_right, _currentIndex < _selectedImages.length -1 ? () => setState(() { _currentIndex++; _enhancedBytes = null; }) : null),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavBtn(IconData i, VoidCallback? onTap) {
+    return Container(
+      decoration: BoxDecoration(color: Colors.black26, shape: BoxShape.circle),
+      child: IconButton(icon: Icon(i, color: onTap == null ? Colors.white24 : Colors.white), onPressed: onTap),
+    );
+  }
+
+  Widget _buildComparisonSlider() {
+    return Center(
+      child: Container(
+        width: 140, height: 32,
+        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(16)),
+        child: SliderTheme(
+          data: SliderThemeData(trackHeight: 2, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6), activeTrackColor: Colors.white, inactiveTrackColor: Colors.white24),
+          child: Slider(value: _comparisonPosition, onChanged: (v) => setState(() => _comparisonPosition = v)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdjustmentsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Presets', style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 16),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _buildPresetChip('Original', 0, 1.0, 0),
+              _buildPresetChip('Document', 40, 1.3, 0.4),
+              _buildPresetChip('Bright', 60, 1.0, 0),
+              _buildPresetChip('Vivid', 20, 1.5, 0.2),
+            ],
+          ),
+        ),
+        const SizedBox(height: 32),
+        const Text('Fine Tune', style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 24),
+        _buildSliderItem(Icons.light_mode_outlined, 'Brightness', _brightness, -100, 100, (v) { _brightness = v; _updatePreview(); }),
+        const SizedBox(height: 24),
+        _buildSliderItem(Icons.contrast_rounded, 'Contrast', _contrast, 0.5, 2.0, (v) { _contrast = v; _updatePreview(); }),
+        const SizedBox(height: 24),
+        _buildSliderItem(Icons.shutter_speed_rounded, 'Sharpness', _sharpness, 0, 3, (v) { _sharpness = v; _updatePreview(); }),
       ],
+    );
+  }
+
+  Widget _buildPresetChip(String label, double b, double c, double s) {
+    bool isSelected = _brightness == b && _contrast == c && _sharpness == s;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        label: Text(label),
+        selected: isSelected,
+        onSelected: (v) {
+          setState(() { _brightness = b; _contrast = c; _sharpness = s; });
+          _updatePreview();
+        },
+        backgroundColor: Colors.white.withValues(alpha: 0.05),
+        selectedColor: Colors.blueAccent,
+        labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.white60, fontSize: 13, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide.none),
+      ),
+    );
+  }
+
+  Widget _buildSliderItem(IconData i, String t, double v, double min, double max, ValueChanged<double> onC) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Icon(i, size: 18, color: Colors.blueAccent),
+            const SizedBox(width: 8),
+            Text(t, style: const TextStyle(color: Colors.white, fontSize: 14)),
+            const Spacer(),
+            Text(v.toStringAsFixed(1), style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          ],
+        ),
+        SliderTheme(
+          data: SliderThemeData(activeTrackColor: Colors.blueAccent, inactiveTrackColor: Colors.white10, thumbColor: Colors.white),
+          child: Slider(value: v, min: min, max: max, onChanged: (val) => setState(() => onC(val))),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: const Color(0xFF1A1A1A), border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.05)))),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: _isProcessing ? null : () => setState(() { _resetAdjustments(); _enhancedBytes = null; }),
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: BorderSide(color: Colors.white10), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), padding: const EdgeInsets.symmetric(vertical: 16)),
+              child: const Text('RESET'),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF00D2FF), Color(0xFF3A7BD5)]), borderRadius: BorderRadius.circular(16)),
+              child: ElevatedButton(
+                onPressed: _isProcessing ? null : _applyEnhancements,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.transparent, shadowColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                child: _isProcessing ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('ENHANCE ALL', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

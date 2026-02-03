@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
 import '../temp_storage/temp_image_manager.dart';
@@ -21,6 +22,15 @@ class PdfBuilder {
       final imageBytes = await page.file.readAsBytes();
       final image = pw.MemoryImage(imageBytes);
 
+      // Load signature if exists
+      pw.MemoryImage? signatureImage;
+      if (page.signaturePath != null) {
+        final sigFile = File(page.signaturePath!);
+        if (await sigFile.exists()) {
+          signatureImage = pw.MemoryImage(await sigFile.readAsBytes());
+        }
+      }
+
       // Calculate rotation
       final rotation = page.rotation;
 
@@ -31,26 +41,52 @@ class PdfBuilder {
               ? pw.PageOrientation.landscape
               : pw.PageOrientation.portrait,
           build: (context) {
-            return pw.Transform.rotate(
-              angle: rotation * 3.14159 / 180,
-              child: pw.Stack(
-                children: [
-                  pw.Center(child: pw.Image(image, fit: pw.BoxFit.contain)),
-                  if (addWatermark)
-                    pw.Positioned(
-                      bottom: 20,
-                      right: 20,
-                      child: pw.Opacity(
-                        opacity: 0.3,
-                        child: pw.Text(
-                          'TempScan',
-                          style: pw.TextStyle(fontSize: 20),
+            final pageContent = pw.Stack(
+              children: [
+                pw.Center(
+                  child: pw.ClipRect(
+                    child: pw.Container(
+                      width: PdfPageFormat.a4.width - 40,
+                      height: PdfPageFormat.a4.height - 40,
+                      child: pw.Image(
+                        image,
+                        alignment: pw.Alignment(
+                          -1.0 + (page.cropRect.x + page.cropRect.width / 2) * 2 / (1 - page.cropRect.width + 0.00001),
+                          -1.0 + (page.cropRect.y + page.cropRect.height / 2) * 2 / (1 - page.cropRect.height + 0.00001),
                         ),
+                        fit: pw.BoxFit.cover,
                       ),
                     ),
-                ],
-              ),
+                  ),
+                ),
+                if (addWatermark)
+                  pw.Positioned(
+                    bottom: 20,
+                    right: 20,
+                    child: pw.Opacity(
+                      opacity: 0.3,
+                      child: pw.Text(
+                        'TempScan',
+                        style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                if (signatureImage != null)
+                  pw.Positioned(
+                    left: (page.signaturePosition?.dx ?? 0.7) * (PdfPageFormat.a4.width - 100),
+                    top: (page.signaturePosition?.dy ?? 0.8) * (PdfPageFormat.a4.height - 110),
+                    child: pw.Image(signatureImage, width: 80, height: 50),
+                  ),
+              ],
             );
+
+            if (rotation != 0) {
+              return pw.Transform.rotate(
+                angle: rotation * 3.14159 / 180,
+                child: pageContent,
+              );
+            }
+            return pageContent;
           },
         ),
       );
