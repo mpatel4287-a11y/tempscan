@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
-import 'auto_enhance_screen.dart';
 import 'ocr_screen.dart';
 import 'merge_pdfs_screen.dart';
 import 'password_pdf_screen.dart';
@@ -114,20 +113,33 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                       ),
                       const SizedBox(height: 12),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.green.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.green.withValues(alpha: 0.2)),
+                          border: Border.all(
+                            color: Colors.green.withValues(alpha: 0.2),
+                          ),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.shield_outlined, size: 14, color: Colors.greenAccent),
+                            const Icon(
+                              Icons.shield_outlined,
+                              size: 14,
+                              color: Colors.greenAccent,
+                            ),
                             const SizedBox(width: 6),
                             const Text(
                               'Privacy First: Images are never saved on device',
-                              style: TextStyle(fontSize: 12, color: Colors.greenAccent, fontWeight: FontWeight.w500),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.greenAccent,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ],
                         ),
@@ -147,60 +159,105 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                   ),
                   delegate: SliverChildListDelegate([
                     _OptionCard(
-                      icon: Icons.auto_fix_high,
-                      title: 'Auto Enhance',
-                      subtitle: 'AI-powered quality boost',
-                      gradient: [const Color(0xFF4FACFE), const Color(0xFF00F2FE)],
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AutoEnhanceScreen())),
-                    ),
-                    _OptionCard(
                       icon: Icons.text_snippet,
                       title: 'OCR Tool',
                       subtitle: 'Extract text instantly',
-                      gradient: [const Color(0xFF43E97B), const Color(0xFF38F9D7)],
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const OcrScreen())),
+                      gradient: [
+                        const Color(0xFF43E97B),
+                        const Color(0xFF38F9D7),
+                      ],
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const OcrScreen()),
+                      ),
                     ),
                     _OptionCard(
                       icon: Icons.lock_person,
                       title: 'Secure PDF',
                       subtitle: 'Password protection',
-                      gradient: [const Color(0xFFFA709A), const Color(0xFFFEE140)],
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PasswordPdfScreen())),
+                      gradient: [
+                        const Color(0xFFFA709A),
+                        const Color(0xFFFEE140),
+                      ],
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const PasswordPdfScreen(),
+                        ),
+                      ),
                     ),
                     _OptionCard(
                       icon: Icons.merge_type,
                       title: 'Merge PDFs',
                       subtitle: 'Combine documents',
-                      gradient: [const Color(0xFF667EEA), const Color(0xFF764BA2)],
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MergePdfsScreen())),
+                      gradient: [
+                        const Color(0xFF667EEA),
+                        const Color(0xFF764BA2),
+                      ],
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const MergePdfsScreen(),
+                        ),
+                      ),
                     ),
                     _OptionCard(
                       icon: Icons.draw_rounded,
                       title: 'Signature',
                       subtitle: 'Sign your documents',
-                      gradient: [const Color(0xFF2AF598), const Color(0xFF009EFD)],
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SignatureScreen())),
+                      gradient: [
+                        const Color(0xFF2AF598),
+                        const Color(0xFF009EFD),
+                      ],
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const SignatureScreen(),
+                        ),
+                      ),
                     ),
                     _OptionCard(
                       icon: Icons.camera_enhance,
                       title: 'Smart Scan',
                       subtitle: 'Scan new documents',
-                      gradient: [const Color(0xFFFF0844), const Color(0xFFFFB199)],
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CameraScreen())),
+                      gradient: [
+                        const Color(0xFFFF0844),
+                        const Color(0xFFFFB199),
+                      ],
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const CameraScreen()),
+                      ),
                     ),
                     _OptionCard(
                       icon: Icons.video_collection,
                       title: 'Video PDF',
                       subtitle: 'Embed video in PDF',
-                      gradient: [const Color(0xFFB721FF), const Color(0xFF21D4FD)],
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateVideoPdfScreen())),
+                      gradient: [
+                        const Color(0xFFB721FF),
+                        const Color(0xFF21D4FD),
+                      ],
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const CreateVideoPdfScreen(),
+                        ),
+                      ),
                     ),
                     _OptionCard(
                       icon: Icons.play_circle_filled_rounded,
                       title: 'Player',
                       subtitle: 'Play Video PDFs',
-                      gradient: [const Color(0xFFFEC867), const Color(0xFFF72585)],
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VideoPdfViewerScreen())),
+                      gradient: [
+                        const Color(0xFFFEC867),
+                        const Color(0xFFF72585),
+                      ],
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const VideoPdfViewerScreen(),
+                        ),
+                      ),
                     ),
                   ]),
                 ),
@@ -233,7 +290,8 @@ class _OptionCard extends StatefulWidget {
   State<_OptionCard> createState() => _OptionCardState();
 }
 
-class _OptionCardState extends State<_OptionCard> with SingleTickerProviderStateMixin {
+class _OptionCardState extends State<_OptionCard>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _scale;
 
@@ -266,7 +324,10 @@ class _OptionCardState extends State<_OptionCard> with SingleTickerProviderState
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.05),
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 1),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.1),
+              width: 1,
+            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.2),
@@ -286,7 +347,9 @@ class _OptionCardState extends State<_OptionCard> with SingleTickerProviderState
                   height: 80,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: widget.gradient.map((e) => e.withValues(alpha: 0.2)).toList(),
+                      colors: widget.gradient
+                          .map((e) => e.withValues(alpha: 0.2))
+                          .toList(),
                     ),
                     shape: BoxShape.circle,
                   ),

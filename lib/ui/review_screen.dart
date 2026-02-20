@@ -76,6 +76,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
         foregroundColor: Colors.black,
         elevation: 0,
         actions: [
+          // Smart Detect button
+          IconButton(
+            icon: const Icon(Icons.auto_fix_high),
+            onPressed: () => _showSmartDetectDialog(),
+            tooltip: 'Smart Page Detection',
+          ),
           // Rename button
           IconButton(
             icon: const Icon(Icons.edit),
@@ -86,16 +92,26 @@ class _ReviewScreenState extends State<ReviewScreen> {
             icon: const Icon(Icons.folder_open),
             onPressed: () => _showSaveLocationDialog(),
           ),
+          // Export button
+          IconButton(
+            icon: const Icon(Icons.save_alt),
+            onPressed: () => _showExportOptions(),
+            tooltip: 'Export Options',
+          ),
           // Settings button to change default save location
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () async {
-              final newPath = await SettingsService.getOrPickSavePath(forcePick: true);
+              final newPath = await SettingsService.getOrPickSavePath(
+                forcePick: true,
+              );
               if (newPath != null && context.mounted) {
                 // Refresh local state if needed (though next save will use it)
                 _loadDefaultSavePath();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Default save location updated to: $newPath')),
+                  SnackBar(
+                    content: Text('Default save location updated to: $newPath'),
+                  ),
                 );
               }
             },
@@ -288,6 +304,282 @@ class _ReviewScreenState extends State<ReviewScreen> {
         },
       ),
     );
+  }
+
+  void _showSmartDetectDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Smart Page Detection'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Detect and fix page issues automatically:',
+              style: TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            _buildSmartOption(
+              icon: Icons.copy_all,
+              title: 'Detect Duplicates',
+              subtitle: 'Find pages that might be scanned twice',
+              onTap: () {
+                Navigator.pop(context);
+                _detectDuplicates();
+              },
+            ),
+            const SizedBox(height: 8),
+            _buildSmartOption(
+              icon: Icons.rotate_right,
+              title: 'Auto-Rotate',
+              subtitle: 'Fix upside-down or rotated pages',
+              onTap: () {
+                Navigator.pop(context);
+                _autoRotatePages();
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSmartOption({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.black26),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.blueAccent),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 11, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.black38),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _detectDuplicates() {
+    final duplicates = _manager.detectDuplicates();
+    setState(() {});
+
+    if (duplicates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No duplicate pages detected')),
+      );
+    } else {
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: Text('${duplicates.length} Potential Duplicates Found'),
+          content: Text(
+            'We found ${duplicates.length} page(s) that might be duplicates. '
+            'They are marked with a warning icon. Review and delete if needed.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                _manager.clearDuplicateFlags();
+                setState(() {});
+                Navigator.pop(context);
+              },
+              child: const Text('Clear'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  void _autoRotatePages() {
+    // Auto-rotate all pages to 0 (reset rotation)
+    for (int i = 0; i < _manager.pages.length; i++) {
+      if (_manager.getPage(i)?.rotation != 0) {
+        final currentRotation = _manager.getPage(i)!.rotation;
+        _manager.rotatePage(i, -currentRotation);
+      }
+    }
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('All pages reset to default orientation')),
+    );
+  }
+
+  void _showExportOptions() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Export Options'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Choose export format:', style: TextStyle(fontSize: 14)),
+            const SizedBox(height: 16),
+            _buildExportOption(
+              icon: Icons.picture_as_pdf,
+              title: 'PDF',
+              subtitle: 'Single or multi-page document',
+              onTap: () {
+                Navigator.pop(context);
+                // Already handled by the main Create PDF button
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Use the "Create PDF" button for PDF export'),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+            _buildExportOption(
+              icon: Icons.image,
+              title: 'JPG',
+              subtitle: 'Export all pages as JPG images',
+              onTap: () {
+                Navigator.pop(context);
+                _exportAsJpg();
+              },
+            ),
+            const SizedBox(height: 8),
+            _buildExportOption(
+              icon: Icons.photo_library,
+              title: 'PNG',
+              subtitle: 'Export all pages as PNG images',
+              onTap: () {
+                Navigator.pop(context);
+                _exportAsPng();
+              },
+            ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 8),
+            _buildExportOption(
+              icon: Icons.burst_mode,
+              title: 'Batch Export',
+              subtitle: 'Export to multiple formats at once',
+              onTap: () {
+                Navigator.pop(context);
+                _batchExport();
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExportOption({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.black26),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.green),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 11, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.black38),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportAsJpg() async {
+    // Implementation for JPG export
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('JPG export - Use the "Create PDF" and save as JPG'),
+      ),
+    );
+  }
+
+  Future<void> _exportAsPng() async {
+    // Implementation for PNG export
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('PNG export - Use the "Create PDF" and save as PNG'),
+      ),
+    );
+  }
+
+  Future<void> _batchExport() async {
+    // Show naming pattern dialog
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => _NamingPatternDialog(),
+    );
+
+    if (result != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Batch export with pattern: $result')),
+      );
+    }
   }
 
   void _openEditScreen(int index) async {

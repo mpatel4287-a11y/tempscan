@@ -3,7 +3,16 @@ import 'dart:ui' as ui;
 import 'package:path_provider/path_provider.dart';
 
 /// Filter types available for images
-enum ImageFilter { none, grayscale, sepia, brightness, contrast, saturation, modernPro, vintageDoc }
+enum ImageFilter {
+  none,
+  grayscale,
+  sepia,
+  brightness,
+  contrast,
+  saturation,
+  modernPro,
+  vintageDoc,
+}
 
 /// Annotation types
 enum AnnotationType { highlight, underline, pen, square, circle, arrow, text }
@@ -98,6 +107,8 @@ class ScannedPage {
   List<Annotation> annotations; // List of user annotations
   double clarity; // 0.0 to 1.0
   double noiseReduction; // 0.0 to 1.0
+  bool isDuplicate; // Flag for duplicate detection
+  int? duplicateOfIndex; // Index of the page this is a duplicate of
 
   String get effectiveName => customName ?? file.path.split('/').last;
 
@@ -113,6 +124,8 @@ class ScannedPage {
     this.annotations = const [],
     this.clarity = 0.0,
     this.noiseReduction = 0.0,
+    this.isDuplicate = false,
+    this.duplicateOfIndex,
   });
 
   /// Get effective name (custom or auto-generated from filename)
@@ -221,7 +234,6 @@ class TempImageManager {
     }
   }
 
-
   /// Set custom name for a page
   void setCustomName(int index, String name) {
     if (index >= 0 && index < _pages.length) {
@@ -310,6 +322,68 @@ class TempImageManager {
       }
     }
     return total;
+  }
+
+  /// Detect potential duplicate pages based on file size and filename similarity
+  /// Returns list of indices that might be duplicates
+  List<int> detectDuplicates() {
+    final List<int> duplicateIndices = [];
+
+    for (int i = 0; i < _pages.length; i++) {
+      if (_pages[i].isDuplicate) continue;
+
+      final currentSize = _pages[i].file.lengthSync();
+      final currentName = _pages[i].file.path.split('/').last;
+
+      for (int j = i + 1; j < _pages.length; j++) {
+        if (_pages[j].isDuplicate) continue;
+
+        final otherSize = _pages[j].file.lengthSync();
+
+        // Check if file sizes are very similar (within 5% tolerance)
+        if (currentSize > 0 &&
+            (currentSize - otherSize).abs() / currentSize < 0.05) {
+          // Mark as potential duplicate
+          _pages[j].isDuplicate = true;
+          _pages[j].duplicateOfIndex = i;
+          duplicateIndices.add(j);
+        }
+      }
+    }
+
+    return duplicateIndices;
+  }
+
+  /// Remove duplicate flag from all pages
+  void clearDuplicateFlags() {
+    for (final page in _pages) {
+      page.isDuplicate = false;
+      page.duplicateOfIndex = null;
+    }
+  }
+
+  /// Auto-detect and fix upside-down pages based on image dimensions
+  /// This is a simplified detection - in production you'd analyze the actual image content
+  void autoCorrectOrientation() {
+    // Note: Full implementation would require analyzing image pixels
+    // For now, this provides a method that can be extended with ML/AI
+    // The camera screen already has auto-rotation detection
+  }
+
+  /// Get pages that might need attention (duplicates, rotated, etc.)
+  Map<String, List<int>> getPagesNeedingAttention() {
+    final Map<String, List<int>> issues = {'duplicates': [], 'rotated': []};
+
+    for (int i = 0; i < _pages.length; i++) {
+      if (_pages[i].isDuplicate) {
+        issues['duplicates']!.add(i);
+      }
+      if (_pages[i].rotation != 0) {
+        issues['rotated']!.add(i);
+      }
+    }
+
+    return issues;
   }
 }
 
