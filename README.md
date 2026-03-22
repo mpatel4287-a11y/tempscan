@@ -1,106 +1,124 @@
-# TempScan - Advanced Mobile Document Scanner & PDF Editor
+# TempScan - Advanced Mobile Document Scanner & PDF Editor (.vPDF Pioneer)
 
 ![TempScan Logo](assets/icon/icon.png)
 
-**TempScan** is a powerful, cross-platform Flutter mobile app for document scanning, OCR, PDF creation/editing, and automation. Transform your phone into a professional document management workstation with advanced AI-powered features like form recognition, auto-enhancement, and workflow automation.
+**TempScan** is a cutting-edge Flutter app revolutionizing document management. Scan, edit, OCR, and create interactive **.vPDF** files (video-embedded PDFs) - the future of rich document formats.
 
-## ✨ Key Features
+## 🚀 Main Features (.vPDF Highlight)
 
-### 📸 Scanning & Capture
-- High-quality camera scanning with auto-detection
-- Multi-page document capture
-- Import from gallery, files, or existing PDFs
-- Video-to-PDF conversion with thumbnails
+### 🎥 **.vPDF - Video Embedded PDFs** ⭐ **KEY FEATURE**
+- Embed videos directly in PDFs (.vpdf format)
+- Built-in video player with timeline thumbnails
+- Seek, play/pause controls within PDF viewer
+- Perfect for tutorials, lectures, contracts with video attachments
+- `create_video_pdf_screen.dart` + `video_embed_builder.dart`
 
-### 🧠 AI-Powered Processing
-- **Advanced OCR** - Extract editable text from scans (Google MLKit)
-- **Form Recognition** - Auto-detect and fill forms
-- **Auto-Enhancement** - Smart filters, de-skew, contrast optimization
-- **Translation Service** - Real-time document translation
-- **Eraser Tool** - Remove backgrounds/objects
+### 📸 **Pro Scanning**
+- Camera with auto-edge detection & multi-page
+- Import images/PDFs/videos
+- High-res capture + temp storage management
 
-### ✏️ Professional Editing
-- Crop, rotate, annotate, and resize
-- Digital signatures & watermarks
-- Password protection
-- PDF merging/splitting
-- Image-to-PDF conversion
+### 🧠 **AI Processing (Full Suite)**
+| Feature | Implementation |
+|---------|----------------|
+| **OCR** | google_mlkit_text_recognition (multi-lang) |
+| **Forms** | form_recognition_service.dart |
+| **Enhance** | auto_enhance_screen.dart + filters |
+| **Translate** | google_mlkit_translation |
+| **Eraser** | eraser_service.dart (magic removal) |
 
-### 📁 Smart Organization
-- Automatic document naming & tagging
-- Folder-based organization (Bills, IDs, Receipts, Work)
-- Full-text OCR search
-- Recent documents & smart sorting
+### ✂️ **Complete Editing**
+- **crop_screen.dart**, rotate_sheet.dart (free rotate)
+- filter_sheet.dart (20+ pro filters)
+- signature_screen.dart + watermark.dart
+- annotation_sheet.dart, edit_image_screen.dart
+- password_pdf_screen.dart, merge_pdfs_screen.dart
 
-### ⚙️ Automation Workflows
-- Custom automation rules (auto-export, auto-enhance, auto-tag)
-- One-tap presets for common workflows
-- Batch processing
+### 📂 **Organization & Automation**
+- document.dart, folder.dart models
+- document_storage_service.dart + backup_service.dart
+- automation_service.dart + rules screen
+- Full-text search & smart tags
 
-### 💼 Export & Sharing
-- High-quality PDF/JPG/PNG export
-- Custom quality/resolution settings
-- Share via any app
-- Protected PDF export
+### 💰 **Monetization Ready**
+- entitlement_manager.dart, token_manager.dart
+- Pro features via in-app purchases
 
-## 🛠️ Tech Stack
+## 🛠 Tech Stack
 
-| Category | Technologies |
-|----------|--------------|
-| **Framework** | Flutter (iOS/Android/Web/Desktop) |
-| **Camera/ML** | camera, google_mlkit_text_recognition, google_mlkit_translation |
+| Layer | Packages |
+|-------|----------|
+| Flutter | Cross-platform (iOS/Android/Web/Linux/macOS/Windows) |
 | **PDF** | pdf, pdfx, syncfusion_flutter_pdf |
-| **Media** | image, video_player, chewie |
-| **Storage** | path_provider, shared_preferences, file_picker |
-| **Utils** | permission_handler, share_plus, archive |
+| **Video** | video_player, chewie, video_embed_builder |
+| **AI/ML** | google_mlkit_* |
+| **Media** | camera, image_picker, image |
 
-## 🚀 Quick Start
+## 🎯 Quick Start
 
-### Prerequisites
-- Flutter SDK 3.10.7+
-- Android/iOS development environment
-
-### Setup
 ```bash
+cd /home/meet-patel/tempscan
 flutter pub get
-dart run flutter_launcher_icons
-dart run flutter_native_splash:create
+flutter pub run flutter_launcher_icons
+flutter pub run flutter_native_splash:create
 flutter run
 ```
 
-## 📱 App Architecture
+**Screenshots**: Review [assets/] for icon/splash previews.
+
+## 📱 Core Screens Flow
 
 ```
-lib/
-├── core/     # App lifecycle, constants
-├── models/   # Document, Folder, AutomationRule
-├── services/ # OCR, Automation, Storage
-├── ui/       # Screens: Home, Camera, OCR, Review
-├── camera/   # Camera capture
-└── utils/    # File/video helpers
+HomeScreen → [Camera/Import/VideoPDF] → ReviewScreen 
+           → [OCR/Enhance/Edit/Sign] → Export (.vPDF/PDF/Image)
+           ↓
+Organized Storage + Automation
 ```
 
-## 🎯 Status
+**All Features Implemented** (from lib/ analysis):
+- ✅ 18+ UI screens (home_options, ocr_screen, advanced_editor, etc.)
+- ✅ Services: signature_service, translation_service, advanced_ocr_engine
+- ✅ Utils: file_size_helper, font_matcher
+- ✅ Models: automation_rule.dart
+- ✅ Temp management for smooth UX
 
-✅ **Complete**: Scanning, OCR, editing, organization, automation foundation  
-🔄 **Next**: Automation UI, advanced exports
+## 📋 Demo Workflows
 
-## 📋 Examples
+### 1. **Video PDF Creation** (Main Feature)
+```
+Home → Create Video PDF → Select video 
+→ Auto-thumbnails → Embed → .vPDF Export
+→ View in video_pdf_viewer_screen.dart
+```
 
-**Scan & OCR**:
-1. Home → Scan
-2. Review → OCR → Enhance
-3. Export searchable PDF
+### 2. **Pro Scan Workflow**
+```
+CameraScreen → Review → OCR Screen → Auto Enhance 
+→ Filter Sheet → Signature → Password Protect → Export
+```
 
-**Merge PDFs**:
-1. Home → Merge PDFs
-2. Reorder → Watermark → Export
+### 3. **Merge & Automate**
+```
+Merge PDFs → Reorder → Watermark → Automation applies tags 
+→ Organized in Folders → Backup Service
+```
 
-## 🤝 Contributing
-Fork → Branch → Commit → PR
+## 🎮 Status (TODO.md Summary)
+
+✅ **Production Ready Core**: .vPDF, scanning, OCR/AI, editing, organization  
+✅ **Advanced**: Automation engine, monetization  
+🔄 **Polish**: Automation UI, cloud backup  
+
+## 🤝 Contribute
+
+1. `git checkout -b feature/.vpdf-enhancement`
+2. Code → `flutter analyze` → PR
+3. Follow Dart style + add tests
 
 ## 📄 License
-Proprietary
+Proprietary (entitlements for pro features)
 
-**⭐ Star if useful!** Built with ❤️ by TempScan Team
+---
+**Pioneering .vPDF format!** ⭐ [Demo APK/IPA coming soon]  
+**Built with Flutter ❤️** | **TempScan Team**
 

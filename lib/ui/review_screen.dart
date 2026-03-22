@@ -43,7 +43,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   int _exportQuality = 100; // 100=High, 70=Medium, 40=Low
 
   String? _selectedFolderId;
-  List<String> _selectedTags = [];
+  final List<String> _selectedTags = [];
 
   @override
   void initState() {
@@ -221,7 +221,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
               width: double.infinity,
               height: 52,
               child: ElevatedButton(
-                onPressed: allPages.isEmpty ? null : () => _showSaveDetailsSheet(),
+                onPressed: allPages.isEmpty
+                    ? null
+                    : () => _showSaveDetailsSheet(),
                 child: const Text('Create PDF', style: TextStyle(fontSize: 16)),
               ),
             ),
@@ -490,7 +492,10 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   },
                 ),
                 const SizedBox(height: 16),
-                const Text('Choose export format:', style: TextStyle(fontSize: 14)),
+                const Text(
+                  'Choose export format:',
+                  style: TextStyle(fontSize: 14),
+                ),
                 const SizedBox(height: 16),
                 _buildExportOption(
                   icon: Icons.picture_as_pdf,
@@ -501,7 +506,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
                     // Already handled by the main Create PDF button
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('Use the "Create PDF" button for PDF export'),
+                        content: Text(
+                          'Use the "Create PDF" button for PDF export',
+                        ),
                       ),
                     );
                   },
@@ -520,51 +527,53 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 _buildExportOption(
                   icon: Icons.image,
                   title: 'JPG',
-              subtitle: 'Export all pages as JPG images',
-              onTap: () {
-                Navigator.pop(context);
-                _exportAsJpg();
-              },
+                  subtitle: 'Export all pages as JPG images',
+                  onTap: () {
+                    Navigator.pop(context);
+                    _exportAsJpg();
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildExportOption(
+                  icon: Icons.photo_library,
+                  title: 'PNG',
+                  subtitle: 'Export all pages as PNG images',
+                  onTap: () {
+                    Navigator.pop(context);
+                    _exportAsPng();
+                  },
+                ),
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 8),
+                _buildExportOption(
+                  icon: Icons.burst_mode,
+                  title: 'Batch Export',
+                  subtitle: 'Export to multiple formats at once',
+                  onTap: () {
+                    Navigator.pop(context);
+                    _batchExport();
+                  },
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            _buildExportOption(
-              icon: Icons.photo_library,
-              title: 'PNG',
-              subtitle: 'Export all pages as PNG images',
-              onTap: () {
-                Navigator.pop(context);
-                _exportAsPng();
-              },
-            ),
-            const SizedBox(height: 16),
-            const Divider(),
-            const SizedBox(height: 8),
-            _buildExportOption(
-              icon: Icons.burst_mode,
-              title: 'Batch Export',
-              subtitle: 'Export to multiple formats at once',
-              onTap: () {
-                Navigator.pop(context);
-                _batchExport();
-              },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
             ),
           ],
         ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
       ),
     );
   }
 
   Future<void> _exportAsText() async {
     if (_manager.pages.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No pages to export')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No pages to export')));
       return;
     }
 
@@ -575,24 +584,31 @@ class _ReviewScreenState extends State<ReviewScreen> {
         builder: (_) => const Center(child: CircularProgressIndicator()),
       );
 
-      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      final textRecognizer = TextRecognizer(
+        script: TextRecognitionScript.latin,
+      );
       StringBuffer extractedText = StringBuffer();
 
       for (int i = 0; i < _manager.pages.length; i++) {
         final page = _manager.pages[i];
         final inputImage = InputImage.fromFilePath(page.file.path);
-        final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
-        
+        final RecognizedText recognizedText = await textRecognizer.processImage(
+          inputImage,
+        );
+
         extractedText.writeln('--- Page ${i + 1} ---');
         extractedText.writeln(recognizedText.text);
         extractedText.writeln();
       }
-      
+
       textRecognizer.close();
 
       final defaultSavePath = await SettingsService.getOrPickSavePath();
-      final directory = _customSaveDirectory ??
-          (defaultSavePath != null ? Directory(defaultSavePath) : await getApplicationDocumentsDirectory());
+      final directory =
+          _customSaveDirectory ??
+          (defaultSavePath != null
+              ? Directory(defaultSavePath)
+              : await getApplicationDocumentsDirectory());
 
       if (!await directory.exists()) {
         await directory.create(recursive: true);
@@ -602,7 +618,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
       final baseName = _customFileName ?? 'TempScan_$timestamp';
       final fileName = '$baseName.txt';
       final filePath = '${directory.path}/$fileName';
-      
+
       final outputFile = File(filePath);
       await outputFile.writeAsString(extractedText.toString());
 
@@ -707,11 +723,14 @@ class _ReviewScreenState extends State<ReviewScreen> {
         final fileName = '${baseName}_page${i + 1}.jpg';
         final filePath = '${directory.path}/$fileName';
         final outputFile = File(filePath);
-        
+
         if (_exportQuality < 100) {
           final decodedImage = img.decodeImage(imageBytes);
           if (decodedImage != null) {
-            final compressedBytes = img.encodeJpg(decodedImage, quality: _exportQuality);
+            final compressedBytes = img.encodeJpg(
+              decodedImage,
+              quality: _exportQuality,
+            );
             await outputFile.writeAsBytes(compressedBytes);
           } else {
             await outputFile.writeAsBytes(imageBytes); // fallback
@@ -962,16 +981,20 @@ class _ReviewScreenState extends State<ReviewScreen> {
   Future<void> _openAdvancedEditor(int index) async {
     final page = _manager.getPage(index);
     if (page == null) return;
-    
+
     final result = await Navigator.push(
-      context, 
-      MaterialPageRoute(builder: (_) => AdvancedEditorScreen(documentFile: page.file))
+      context,
+      MaterialPageRoute(
+        builder: (_) => AdvancedEditorScreen(documentFile: page.file),
+      ),
     );
-    
+
     if (result != null && result is File && mounted) {
-       await _manager.updatePageFile(index, result);
-       setState(() {});
-       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Document updated with advanced edits')));
+      await _manager.updatePageFile(index, result);
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Document updated with advanced edits')),
+      );
     }
   }
 
@@ -1002,7 +1025,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
         fileSize: await file.length(),
         type: DocumentType.pdf,
       );
-      
+
       await AutomationService.instance.initialize();
       final automatedDoc = await AutomationService.instance.executeRules(
         document: doc,
@@ -1040,7 +1063,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
     DocumentStorageService.instance.initialize().then((_) {
       if (!mounted) return;
       final folders = DocumentStorageService.instance.folders;
-      
+
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -1049,36 +1072,63 @@ class _ReviewScreenState extends State<ReviewScreen> {
             return Padding(
               padding: EdgeInsets.only(
                 bottom: MediaQuery.of(context).viewInsets.bottom,
-                left: 24, right: 24, top: 24,
+                left: 24,
+                right: 24,
+                top: 24,
               ),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Save Details', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                    const Text(
+                      'Save Details',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 16),
-                    
+
                     // Filename
                     TextField(
-                      decoration: const InputDecoration(labelText: 'Filename', border: OutlineInputBorder()),
-                      controller: TextEditingController(text: _customFileName ?? 'Scan_${DateTime.now().millisecondsSinceEpoch}')..selection = TextSelection.collapsed(offset: 0),
+                      decoration: const InputDecoration(
+                        labelText: 'Filename',
+                        border: OutlineInputBorder(),
+                      ),
+                      controller: TextEditingController(
+                        text:
+                            _customFileName ??
+                            'Scan_${DateTime.now().millisecondsSinceEpoch}',
+                      )..selection = TextSelection.collapsed(offset: 0),
                       onChanged: (val) => _customFileName = val,
                     ),
                     const SizedBox(height: 16),
-                    
+
                     // Folder
                     DropdownButtonFormField<String?>(
-                      decoration: const InputDecoration(labelText: 'Folder', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: 'Folder',
+                        border: OutlineInputBorder(),
+                      ),
                       value: _selectedFolderId,
                       items: [
-                        const DropdownMenuItem(value: null, child: Text('No Folder')),
-                        ...folders.map((f) => DropdownMenuItem(value: f.id, child: Text(f.name))),
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text('No Folder'),
+                        ),
+                        ...folders.map(
+                          (f) => DropdownMenuItem(
+                            value: f.id,
+                            child: Text(f.name),
+                          ),
+                        ),
                       ],
-                      onChanged: (val) => setSheetState(() => _selectedFolderId = val),
+                      onChanged: (val) =>
+                          setSheetState(() => _selectedFolderId = val),
                     ),
                     const SizedBox(height: 16),
-                    
+
                     // Tags
                     TextField(
                       decoration: const InputDecoration(
@@ -1086,7 +1136,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
                         border: OutlineInputBorder(),
                       ),
                       onSubmitted: (val) {
-                        if (val.trim().isNotEmpty && !_selectedTags.contains(val.trim())) {
+                        if (val.trim().isNotEmpty &&
+                            !_selectedTags.contains(val.trim())) {
                           setSheetState(() => _selectedTags.add(val.trim()));
                         }
                       },
@@ -1094,13 +1145,19 @@ class _ReviewScreenState extends State<ReviewScreen> {
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
-                      children: _selectedTags.map((tag) => Chip(
-                        label: Text(tag),
-                        onDeleted: () => setSheetState(() => _selectedTags.remove(tag)),
-                      )).toList(),
+                      children: _selectedTags
+                          .map(
+                            (tag) => Chip(
+                              label: Text(tag),
+                              onDeleted: () => setSheetState(
+                                () => _selectedTags.remove(tag),
+                              ),
+                            ),
+                          )
+                          .toList(),
                     ),
                     const SizedBox(height: 24),
-                    
+
                     SizedBox(
                       width: double.infinity,
                       height: 52,
@@ -1197,11 +1254,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
           if (pickedFile.path != null) {
             // Read the image
             final bytes = await File(pickedFile.path!).readAsBytes();
-            
+
             // Generate a unique name for temp storage
             final tempFile = await _manager.createTempImageFile();
             await tempFile.writeAsBytes(bytes);
-            
+
             // Add to manager
             _manager.addImage(tempFile);
           }
@@ -1232,7 +1289,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
         allowMultiple: false,
       );
 
-      if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
+      if (result != null &&
+          result.files.isNotEmpty &&
+          result.files.first.path != null) {
         showDialog(
           context: context,
           barrierDismissible: false,
@@ -1270,9 +1329,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
     } catch (e) {
       if (mounted) {
         if (Navigator.canPop(context)) Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error adding from PDF: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error adding from PDF: $e')));
       }
     }
   }
@@ -1654,7 +1713,11 @@ class _ImageCard extends StatelessWidget {
 
           // Quick actions
           IconButton(
-            icon: const Icon(Icons.text_fields_rounded, size: 20, color: Colors.blueAccent),
+            icon: const Icon(
+              Icons.text_fields_rounded,
+              size: 20,
+              color: Colors.blueAccent,
+            ),
             onPressed: onAdvancedEdit,
             tooltip: 'Advanced Edit (Translation, Eraser, OCR)',
           ),
