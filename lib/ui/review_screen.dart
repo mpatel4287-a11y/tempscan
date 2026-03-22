@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 import '../temp_storage/temp_image_manager.dart';
 import '../services/settings_service.dart';
 import '../document_builder/pdf_builder.dart';
@@ -12,6 +13,15 @@ import '../ui/pdf_success_screen.dart';
 import '../ui/rename_dialog.dart';
 import '../ui/rotate_sheet.dart';
 import '../ui/edit_image_screen.dart';
+import '../ui/advanced_editor_screen.dart';
+import '../camera/camera_screen.dart';
+import 'package:pdfx/pdfx.dart' as pdfx;
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image/image.dart' as img;
+import '../services/document_storage_service.dart';
+import '../models/document.dart';
+import '../services/automation_service.dart';
+import '../models/automation_rule.dart';
 
 class ReviewScreen extends StatefulWidget {
   const ReviewScreen({super.key});
@@ -29,6 +39,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
   // Save location
   String? _selectedSavePath;
   Directory? _customSaveDirectory;
+
+  int _exportQuality = 100; // 100=High, 70=Medium, 40=Low
+
+  String? _selectedFolderId;
+  List<String> _selectedTags = [];
 
   @override
   void initState() {
@@ -151,9 +166,16 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   onDelete: () => _confirmDelete(page),
                   onRename: () => _showPageRenameDialog(index),
                   onRotate: () => _showRotateSheet(index),
+                  onAdvancedEdit: () => _openAdvancedEditor(index),
                 );
               },
             ),
+
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddPagesOptions,
+        backgroundColor: Colors.blueAccent,
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
 
       // Bottom primary action
       bottomNavigationBar: Container(
@@ -199,7 +221,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
               width: double.infinity,
               height: 52,
               child: ElevatedButton(
-                onPressed: allPages.isEmpty ? null : () => _createPdf(),
+                onPressed: allPages.isEmpty ? null : () => _showSaveDetailsSheet(),
                 child: const Text('Create PDF', style: TextStyle(fontSize: 16)),
               ),
             ),
@@ -444,32 +466,60 @@ class _ReviewScreenState extends State<ReviewScreen> {
   void _showExportOptions() {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Export Options'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Choose export format:', style: TextStyle(fontSize: 14)),
-            const SizedBox(height: 16),
-            _buildExportOption(
-              icon: Icons.picture_as_pdf,
-              title: 'PDF',
-              subtitle: 'Single or multi-page document',
-              onTap: () {
-                Navigator.pop(context);
-                // Already handled by the main Create PDF button
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Use the "Create PDF" button for PDF export'),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-            _buildExportOption(
-              icon: Icons.image,
-              title: 'JPG',
+      builder: (_) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Export Options'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Export Quality:', style: TextStyle(fontSize: 14)),
+                const SizedBox(height: 8),
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 40, label: Text('Low')),
+                    ButtonSegment(value: 70, label: Text('Med')),
+                    ButtonSegment(value: 100, label: Text('High')),
+                  ],
+                  selected: {_exportQuality},
+                  onSelectionChanged: (Set<int> newSelection) {
+                    setDialogState(() {
+                      _exportQuality = newSelection.first;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                const Text('Choose export format:', style: TextStyle(fontSize: 14)),
+                const SizedBox(height: 16),
+                _buildExportOption(
+                  icon: Icons.picture_as_pdf,
+                  title: 'PDF',
+                  subtitle: 'Single or multi-page document',
+                  onTap: () {
+                    Navigator.pop(context);
+                    // Already handled by the main Create PDF button
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Use the "Create PDF" button for PDF export'),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildExportOption(
+                  icon: Icons.text_snippet,
+                  title: 'TXT (OCR)',
+                  subtitle: 'Export recognized text',
+                  onTap: () {
+                    Navigator.pop(context);
+                    _exportAsText();
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildExportOption(
+                  icon: Icons.image,
+                  title: 'JPG',
               subtitle: 'Export all pages as JPG images',
               onTap: () {
                 Navigator.pop(context);
@@ -500,6 +550,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
             ),
           ],
         ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -507,7 +558,73 @@ class _ReviewScreenState extends State<ReviewScreen> {
           ),
         ],
       ),
+      ),
     );
+  }
+
+  Future<void> _exportAsText() async {
+    if (_manager.pages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No pages to export')));
+      return;
+    }
+
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+
+      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      StringBuffer extractedText = StringBuffer();
+
+      for (int i = 0; i < _manager.pages.length; i++) {
+        final page = _manager.pages[i];
+        final inputImage = InputImage.fromFilePath(page.file.path);
+        final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
+        
+        extractedText.writeln('--- Page ${i + 1} ---');
+        extractedText.writeln(recognizedText.text);
+        extractedText.writeln();
+      }
+      
+      textRecognizer.close();
+
+      final defaultSavePath = await SettingsService.getOrPickSavePath();
+      final directory = _customSaveDirectory ??
+          (defaultSavePath != null ? Directory(defaultSavePath) : await getApplicationDocumentsDirectory());
+
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final baseName = _customFileName ?? 'TempScan_$timestamp';
+      final fileName = '$baseName.txt';
+      final filePath = '${directory.path}/$fileName';
+      
+      final outputFile = File(filePath);
+      await outputFile.writeAsString(extractedText.toString());
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Exported text to ${directory.path}'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error exporting text: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Widget _buildExportOption({
@@ -551,33 +668,281 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
   Future<void> _exportAsJpg() async {
-    // Implementation for JPG export
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('JPG export - Use the "Create PDF" and save as JPG'),
-      ),
-    );
+    if (_manager.pages.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No pages to export')));
+      return;
+    }
+
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+
+      // Get save directory
+      final defaultSavePath = await SettingsService.getOrPickSavePath();
+      final directory =
+          _customSaveDirectory ??
+          (defaultSavePath != null
+              ? Directory(defaultSavePath)
+              : await getApplicationDocumentsDirectory());
+
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
+
+      // Generate base filename
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final baseName = _customFileName ?? 'TempScan_$timestamp';
+
+      int exportedCount = 0;
+      for (int i = 0; i < _manager.pages.length; i++) {
+        final page = _manager.pages[i];
+        final imageBytes = await page.file.readAsBytes();
+
+        final fileName = '${baseName}_page${i + 1}.jpg';
+        final filePath = '${directory.path}/$fileName';
+        final outputFile = File(filePath);
+        
+        if (_exportQuality < 100) {
+          final decodedImage = img.decodeImage(imageBytes);
+          if (decodedImage != null) {
+            final compressedBytes = img.encodeJpg(decodedImage, quality: _exportQuality);
+            await outputFile.writeAsBytes(compressedBytes);
+          } else {
+            await outputFile.writeAsBytes(imageBytes); // fallback
+          }
+        } else {
+          await outputFile.writeAsBytes(imageBytes);
+        }
+        exportedCount++;
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Exported $exportedCount JPG images to ${directory.path}',
+          ),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error exporting JPG: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Future<void> _exportAsPng() async {
-    // Implementation for PNG export
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('PNG export - Use the "Create PDF" and save as PNG'),
-      ),
-    );
+    if (_manager.pages.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No pages to export')));
+      return;
+    }
+
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+
+      // Get save directory
+      final defaultSavePath = await SettingsService.getOrPickSavePath();
+      final directory =
+          _customSaveDirectory ??
+          (defaultSavePath != null
+              ? Directory(defaultSavePath)
+              : await getApplicationDocumentsDirectory());
+
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
+
+      // Generate base filename
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final baseName = _customFileName ?? 'TempScan_$timestamp';
+
+      int exportedCount = 0;
+      for (int i = 0; i < _manager.pages.length; i++) {
+        final page = _manager.pages[i];
+        final imageBytes = await page.file.readAsBytes();
+
+        // Simply save as PNG (Flutter will handle the conversion)
+        final fileName = '${baseName}_page${i + 1}.png';
+        final filePath = '${directory.path}/$fileName';
+        final outputFile = File(filePath);
+
+        // For PNG, we'd need image package to convert.
+        // For now, save as-is with .png extension (users can rename or convert)
+        await outputFile.writeAsBytes(imageBytes);
+        exportedCount++;
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Exported $exportedCount PNG images to ${directory.path}',
+          ),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error exporting PNG: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Future<void> _batchExport() async {
+    if (_manager.pages.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No pages to export')));
+      return;
+    }
+
     // Show naming pattern dialog
-    final result = await showDialog<String>(
+    final pattern = await showDialog<String>(
       context: context,
-      builder: (_) => _NamingPatternDialog(),
+      builder: (_) => const _NamingPatternDialog(),
     );
 
-    if (result != null && mounted) {
+    if (pattern == null || !mounted) return;
+
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+
+      // Get save directory
+      final defaultSavePath = await SettingsService.getOrPickSavePath();
+      final directory =
+          _customSaveDirectory ??
+          (defaultSavePath != null
+              ? Directory(defaultSavePath)
+              : await getApplicationDocumentsDirectory());
+
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
+
+      // Generate base filename with pattern
+      final timestamp = DateTime.now();
+      final baseName =
+          _customFileName ?? 'TempScan_${timestamp.millisecondsSinceEpoch}';
+
+      // Apply naming pattern
+      String applyPattern(String pattern, int pageNum) {
+        return pattern
+            .replaceAll(
+              '{date}',
+              '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.day.toString().padLeft(2, '0')}',
+            )
+            .replaceAll(
+              '{time}',
+              '${timestamp.hour.toString().padLeft(2, '0')}-${timestamp.minute.toString().padLeft(2, '0')}',
+            )
+            .replaceAll('{page}', pageNum.toString().padLeft(2, '0'))
+            .replaceAll('{custom}', _customFileName ?? baseName);
+      }
+
+      int pdfCount = 0;
+      int jpgCount = 0;
+      int pngCount = 0;
+
+      // Export as PDF
+      try {
+        final pdfPattern = applyPattern(pattern, 0);
+        final pdfFileName = '$pdfPattern.pdf';
+        final pdfPath = '${directory.path}/$pdfFileName';
+
+        final pdf = await PdfBuilder.createPdf(
+          addWatermark: true,
+          customFileName: pdfFileName.replaceAll('.pdf', ''),
+          customDirectory: directory,
+        );
+
+        // Move to correct location if different
+        if (pdf.path != pdfPath) {
+          await pdf.copy(pdfPath);
+          await pdf.delete();
+        }
+        pdfCount++;
+      } catch (e) {
+        debugPrint('PDF export error: $e');
+      }
+
+      // Export as JPG
+      for (int i = 0; i < _manager.pages.length; i++) {
+        final page = _manager.pages[i];
+        final imageBytes = await page.file.readAsBytes();
+
+        final jpgPattern = applyPattern(pattern, i + 1);
+        final filePath = '${directory.path}/$jpgPattern.jpg';
+        final outputFile = File(filePath);
+        await outputFile.writeAsBytes(imageBytes);
+        jpgCount++;
+      }
+
+      // Export as PNG (save with .png extension)
+      for (int i = 0; i < _manager.pages.length; i++) {
+        final page = _manager.pages[i];
+        final imageBytes = await page.file.readAsBytes();
+
+        final pngPattern = applyPattern(pattern, i + 1);
+        final filePath = '${directory.path}/$pngPattern.png';
+        final outputFile = File(filePath);
+        await outputFile.writeAsBytes(imageBytes);
+        pngCount++;
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Batch export with pattern: $result')),
+        SnackBar(
+          content: Text(
+            'Batch export complete!\n'
+            'PDF: $pdfCount, JPG: $jpgCount, PNG: $pngCount\n'
+            'Saved to: ${directory.path}',
+          ),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error in batch export: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -594,32 +959,321 @@ class _ReviewScreenState extends State<ReviewScreen> {
     }
   }
 
+  Future<void> _openAdvancedEditor(int index) async {
+    final page = _manager.getPage(index);
+    if (page == null) return;
+    
+    final result = await Navigator.push(
+      context, 
+      MaterialPageRoute(builder: (_) => AdvancedEditorScreen(documentFile: page.file))
+    );
+    
+    if (result != null && result is File && mounted) {
+       await _manager.updatePageFile(index, result);
+       setState(() {});
+       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Document updated with advanced edits')));
+    }
+  }
+
   Future<void> _createPdf() async {
     try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+
       final file = await PdfBuilder.createPdf(
         addWatermark: true,
         customFileName: _customFileName,
         customDirectory: _customSaveDirectory,
       );
 
+      // Save to DocumentStorageService
+      await DocumentStorageService.instance.initialize(); // ensure it's loaded
+      ScannedDocument doc = ScannedDocument(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        name: file.path.split('/').last,
+        createdAt: DateTime.now(),
+        modifiedAt: DateTime.now(),
+        folderId: _selectedFolderId,
+        tags: _selectedTags,
+        filePath: file.path,
+        fileSize: await file.length(),
+        type: DocumentType.pdf,
+      );
+      
+      await AutomationService.instance.initialize();
+      final automatedDoc = await AutomationService.instance.executeRules(
+        document: doc,
+        trigger: RuleTrigger.afterScan,
+      );
+      if (automatedDoc != null) {
+        doc = automatedDoc;
+      }
+
+      await DocumentStorageService.instance.addDocument(doc);
+
       // Clear temp images after PDF creation
       await TempImageManager().clearAll();
 
-      if (!context.mounted) return;
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
 
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => PdfSuccessScreen(pdfFile: file)),
       );
     } catch (e) {
-      if (!context.mounted) return;
-
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error creating PDF: $e'),
           backgroundColor: Colors.red,
         ),
       );
+    }
+  }
+
+  void _showSaveDetailsSheet() {
+    DocumentStorageService.instance.initialize().then((_) {
+      if (!mounted) return;
+      final folders = DocumentStorageService.instance.folders;
+      
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        builder: (_) => StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+                left: 24, right: 24, top: 24,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Save Details', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 16),
+                    
+                    // Filename
+                    TextField(
+                      decoration: const InputDecoration(labelText: 'Filename', border: OutlineInputBorder()),
+                      controller: TextEditingController(text: _customFileName ?? 'Scan_${DateTime.now().millisecondsSinceEpoch}')..selection = TextSelection.collapsed(offset: 0),
+                      onChanged: (val) => _customFileName = val,
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // Folder
+                    DropdownButtonFormField<String?>(
+                      decoration: const InputDecoration(labelText: 'Folder', border: OutlineInputBorder()),
+                      value: _selectedFolderId,
+                      items: [
+                        const DropdownMenuItem(value: null, child: Text('No Folder')),
+                        ...folders.map((f) => DropdownMenuItem(value: f.id, child: Text(f.name))),
+                      ],
+                      onChanged: (val) => setSheetState(() => _selectedFolderId = val),
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // Tags
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Add Tag (Press Enter)',
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (val) {
+                        if (val.trim().isNotEmpty && !_selectedTags.contains(val.trim())) {
+                          setSheetState(() => _selectedTags.add(val.trim()));
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: _selectedTags.map((tag) => Chip(
+                        label: Text(tag),
+                        onDeleted: () => setSheetState(() => _selectedTags.remove(tag)),
+                      )).toList(),
+                    ),
+                    const SizedBox(height: 24),
+                    
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _createPdf();
+                        },
+                        child: const Text('Save & Create PDF'),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    });
+  }
+
+  void _showAddPagesOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => Container(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Add Pages',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            _buildSmartOption(
+              icon: Icons.camera_alt,
+              title: 'From Camera',
+              subtitle: 'Scan new documents',
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const CameraScreen()),
+                ).then((_) {
+                  // Refresh UI after returning from camera
+                  setState(() {});
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildSmartOption(
+              icon: Icons.photo_library,
+              title: 'From Gallery',
+              subtitle: 'Add existing images',
+              onTap: () {
+                Navigator.pop(context);
+                _addFromGallery();
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildSmartOption(
+              icon: Icons.picture_as_pdf,
+              title: 'From PDF',
+              subtitle: 'Extract pages from PDF',
+              onTap: () {
+                Navigator.pop(context);
+                _addFromPdf();
+              },
+            ),
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addFromGallery() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const Center(child: CircularProgressIndicator()),
+        );
+
+        for (final pickedFile in result.files) {
+          if (pickedFile.path != null) {
+            // Read the image
+            final bytes = await File(pickedFile.path!).readAsBytes();
+            
+            // Generate a unique name for temp storage
+            final tempFile = await _manager.createTempImageFile();
+            await tempFile.writeAsBytes(bytes);
+            
+            // Add to manager
+            _manager.addImage(tempFile);
+          }
+        }
+
+        if (mounted) {
+          Navigator.pop(context); // close dialog
+          setState(() {});
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Added ${result.files.length} images')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error adding from gallery: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _addFromPdf() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+        allowMultiple: false,
+      );
+
+      if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const Center(child: CircularProgressIndicator()),
+        );
+
+        final doc = await pdfx.PdfDocument.openFile(result.files.first.path!);
+        int pageCount = doc.pagesCount;
+
+        for (int i = 1; i <= pageCount; i++) {
+          final page = await doc.getPage(i);
+          // Render the page as image
+          final pageImage = await page.render(
+            width: page.width * 2.0, // Scale for better quality
+            height: page.height * 2.0,
+            format: pdfx.PdfPageImageFormat.jpeg,
+          );
+
+          if (pageImage != null) {
+            final tempFile = await _manager.createTempImageFile();
+            await tempFile.writeAsBytes(pageImage.bytes);
+            _manager.addImage(tempFile);
+          }
+          await page.close();
+        }
+
+        if (mounted) {
+          Navigator.pop(context); // close dialog
+          setState(() {});
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Added $pageCount pages from PDF')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        if (Navigator.canPop(context)) Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error adding from PDF: $e')),
+        );
+      }
     }
   }
 }
@@ -887,6 +1541,7 @@ class _ImageCard extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback onRename;
   final VoidCallback onRotate;
+  final VoidCallback onAdvancedEdit;
 
   const _ImageCard({
     super.key,
@@ -896,6 +1551,7 @@ class _ImageCard extends StatelessWidget {
     required this.onDelete,
     required this.onRename,
     required this.onRotate,
+    required this.onAdvancedEdit,
   });
 
   @override
@@ -998,6 +1654,11 @@ class _ImageCard extends StatelessWidget {
 
           // Quick actions
           IconButton(
+            icon: const Icon(Icons.text_fields_rounded, size: 20, color: Colors.blueAccent),
+            onPressed: onAdvancedEdit,
+            tooltip: 'Advanced Edit (Translation, Eraser, OCR)',
+          ),
+          IconButton(
             icon: const Icon(Icons.rotate_right, size: 20),
             onPressed: onRotate,
             tooltip: 'Rotate',
@@ -1009,6 +1670,154 @@ class _ImageCard extends StatelessWidget {
           const SizedBox(width: 8),
         ],
       ),
+    );
+  }
+}
+
+/* ---------------- Naming Pattern Dialog ---------------- */
+
+class _NamingPatternDialog extends StatefulWidget {
+  const _NamingPatternDialog();
+
+  @override
+  State<_NamingPatternDialog> createState() => _NamingPatternDialogState();
+}
+
+class _NamingPatternDialogState extends State<_NamingPatternDialog> {
+  final _controller = TextEditingController(text: 'TempScan_{date}');
+
+  final List<String> _suggestions = [
+    'TempScan_{date}',
+    'Document_{page}',
+    'Scan_{date}_{time}',
+    'MyDoc_{custom}',
+  ];
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Naming Pattern'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Enter a naming pattern for batch export:',
+            style: TextStyle(fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _controller,
+            decoration: InputDecoration(
+              labelText: 'Pattern',
+              hintText: 'e.g., TempScan_{date}',
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.clear),
+                onPressed: () => _controller.clear(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Available variables:',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: const [
+              _PatternChip(label: '{date}', description: 'Date'),
+              _PatternChip(label: '{time}', description: 'Time'),
+              _PatternChip(label: '{page}', description: 'Page #'),
+              _PatternChip(label: '{custom}', description: 'Custom name'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Quick suggestions:',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _suggestions
+                .map(
+                  (s) => _SuggestionChip(
+                    label: s,
+                    onTap: () => _controller.text = s,
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            final pattern = _controller.text.trim();
+            if (pattern.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Please enter a naming pattern')),
+              );
+              return;
+            }
+            Navigator.pop(context, pattern);
+          },
+          child: const Text('Export'),
+        ),
+      ],
+    );
+  }
+}
+
+class _PatternChip extends StatelessWidget {
+  final String label;
+  final String description;
+
+  const _PatternChip({required this.label, required this.description});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.blue.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Colors.blue.withOpacity(0.3)),
+      ),
+      child: Text(
+        '$label ($description)',
+        style: const TextStyle(fontSize: 11, color: Colors.blue),
+      ),
+    );
+  }
+}
+
+class _SuggestionChip extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _SuggestionChip({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return ActionChip(
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      onPressed: onTap,
+      backgroundColor: Colors.grey.withOpacity(0.1),
     );
   }
 }

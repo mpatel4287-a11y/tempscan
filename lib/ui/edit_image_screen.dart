@@ -9,6 +9,7 @@ import 'dart:math' as math;
 import 'annotation_sheet.dart';
 import 'rename_dialog.dart';
 import 'signature_screen.dart';
+import 'advanced_editor_screen.dart';
 
 enum EditTool { none, rotate, filter, enhance, markup, signature }
 
@@ -524,6 +525,8 @@ class _EditImageScreenState extends State<EditImageScreen> {
                 if (_showAnnotationSheet)
                   Positioned.fill(
                     child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(color: Colors.transparent), // Ensure there is a hit area
                       onTapDown: (details) {
                         if (_currentAnnotationType == AnnotationType.text) {
                           _showTextInputDialog(details.localPosition);
@@ -870,6 +873,24 @@ class _EditImageScreenState extends State<EditImageScreen> {
         return [
           _buildToolButton(icon: Icons.history_edu_rounded, label: 'Sign', onTap: () => setState(() => _activeTool = EditTool.signature)),
           _buildToolButton(icon: Icons.gesture, label: 'Markup', onTap: _showAnnotations),
+          _buildToolButton(
+            icon: Icons.text_fields_rounded, 
+            label: 'Advanced Edit', 
+            onTap: () async {
+              final result = await Navigator.push(
+                context, 
+                MaterialPageRoute(builder: (_) => AdvancedEditorScreen(documentFile: _page.file))
+              );
+              if (result != null && result is File && mounted) {
+                 // Replace the page file with the newly edited/flattened version
+                 await _manager.updatePageFile(widget.pageIndex, result);
+                 setState(() {
+                   _page = _manager.getPage(widget.pageIndex)!;
+                 });
+                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Document updated with edits')));
+              }
+            }
+          ),
         ];
       default:
         return [];

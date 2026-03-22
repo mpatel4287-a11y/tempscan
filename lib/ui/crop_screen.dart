@@ -524,6 +524,11 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
 
     double displayWidth, displayHeight;
 
+    if (imageHeight <= 0 || imageWidth <= 0 || availableSize.height <= 0 || availableSize.width <= 0) {
+      _imageDisplayRect = Rect.fromLTWH(0, 0, 1, 1);
+      return;
+    }
+
     if (areaAspect > imageAspect) {
       displayHeight = availableSize.height * 0.9;
       displayWidth = displayHeight * imageAspect;
@@ -531,6 +536,10 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
       displayWidth = availableSize.width * 0.9;
       displayHeight = displayWidth / imageAspect;
     }
+
+    // Ensure display area is at least something to avoid division by zero
+    displayWidth = displayWidth.clamp(1.0, double.infinity);
+    displayHeight = displayHeight.clamp(1.0, double.infinity);
 
     _imageDisplayRect = Rect.fromLTWH(
       (availableSize.width - displayWidth) / 2,
@@ -552,6 +561,8 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
     final RenderBox renderBox = context.findRenderObject() as RenderBox;
     final localPosition = renderBox.globalToLocal(details.globalPosition);
     
+    if (_imageDisplayRect.width <= 0 || _imageDisplayRect.height <= 0) return;
+
     final relativeX = (localPosition.dx - _imageDisplayRect.left) / _imageDisplayRect.width;
     final relativeY = (localPosition.dy - _imageDisplayRect.top) / _imageDisplayRect.height;
 
@@ -600,6 +611,10 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
         newCrop = _localCrop;
     }
 
+    if (!newCrop.x.isFinite || !newCrop.y.isFinite || !newCrop.width.isFinite || !newCrop.height.isFinite) {
+      newCrop = _startCrop;
+    }
+
     if (mounted) {
       setState(() {
         _localCrop = newCrop;
@@ -625,12 +640,19 @@ class _CropInteractiveAreaState extends State<_CropInteractiveArea> {
 
     final delta = details.localPosition - _dragStartLocalPos!;
 
+    if (_imageDisplayRect.width <= 0 || _imageDisplayRect.height <= 0) return;
+
     // Convert pixel delta into normalized delta based on display rect.
     final dxNorm = delta.dx / _imageDisplayRect.width;
     final dyNorm = delta.dy / _imageDisplayRect.height;
 
     var newX = (_dragStartCrop.x + dxNorm).clamp(0.0, 1.0 - _dragStartCrop.width);
     var newY = (_dragStartCrop.y + dyNorm).clamp(0.0, 1.0 - _dragStartCrop.height);
+
+    if (!newX.isFinite || !newY.isFinite) {
+      newX = _dragStartCrop.x;
+      newY = _dragStartCrop.y;
+    }
 
     final newCrop = CropRect(
       x: newX,

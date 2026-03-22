@@ -8,6 +8,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   pdfx
   permission_handler_windows
   share_plus
+  uri_content
   url_launcher_windows
 )
 

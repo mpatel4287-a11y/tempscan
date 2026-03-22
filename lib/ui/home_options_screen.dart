@@ -1,14 +1,28 @@
+// ignore_for_file: unused_field
+
 import 'dart:async';
 import 'dart:io';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'ocr_screen.dart';
 import 'merge_pdfs_screen.dart';
 import 'password_pdf_screen.dart';
 import 'signature_screen.dart';
 import '../camera/camera_screen.dart';
+import '../services/document_storage_service.dart';
+import '../models/document.dart';
+import '../models/folder.dart';
 import 'create_video_pdf_screen.dart';
 import 'video_pdf_viewer_screen.dart';
+import 'saved_pdf_editor_screen.dart';
+import '../temp_storage/temp_image_manager.dart';
+import 'package:pdfx/pdfx.dart' as pdfx;
+import '../services/backup_service.dart';
+import 'package:uri_content/uri_content.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:share_plus/share_plus.dart';
 
 class HomeOptionsScreen extends StatefulWidget {
   const HomeOptionsScreen({super.key});
@@ -21,10 +35,51 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
   late AppLinks _appLinks;
   StreamSubscription<Uri>? _linkSubscription;
 
+  // Document storage
+  List<ScannedDocument> _documents = [];
+  List<DocumentFolder> _folders = [];
+  String _selectedTag = 'All';
+  String _searchQuery = '';
+  bool _isLoading = true;
+
   @override
   void initState() {
     super.initState();
     _initDeepLinks();
+    _loadDocuments();
+  }
+
+  Future<void> _loadDocuments() async {
+    setState(() => _isLoading = true);
+    await DocumentStorageService.instance.initialize();
+    setState(() {
+      _documents = DocumentStorageService.instance.documents;
+      _folders = DocumentStorageService.instance.folders;
+      _isLoading = false;
+    });
+  }
+
+  List<ScannedDocument> get _filteredDocuments {
+    var docs = _documents;
+
+    // Filter by search query
+    if (_searchQuery.isNotEmpty) {
+      final query = _searchQuery.toLowerCase();
+      docs = docs
+          .where(
+            (doc) =>
+                doc.name.toLowerCase().contains(query) ||
+                (doc.ocrText?.toLowerCase().contains(query) ?? false),
+          )
+          .toList();
+    }
+
+    // Filter by tag
+    if (_selectedTag != 'All') {
+      docs = docs.where((doc) => doc.tags.contains(_selectedTag)).toList();
+    }
+
+    return docs;
   }
 
   void _initDeepLinks() {
@@ -39,17 +94,36 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
     });
   }
 
-  void _handleLink(Uri uri) {
-    final path = uri.toFilePath();
-    if (path.endsWith('.vpdf') || path.endsWith('.pdf')) {
-      if (mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => VideoPdfViewerScreen(initialFile: File(path)),
-          ),
-        );
+  void _handleLink(Uri uri) async {
+    try {
+      File file;
+      if (uri.scheme == 'content') {
+        final bytes = await uri.getContentOrNull();
+        if (bytes == null) {
+          debugPrint('Failed to get content from URI: $uri');
+          return;
+        }
+        final tempDir = await getTemporaryDirectory();
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        file = File('${tempDir.path}/temp_vpdf_$timestamp.vpdf');
+        await file.writeAsBytes(bytes);
+      } else {
+        file = File(uri.toFilePath());
       }
+
+      final path = file.path.toLowerCase();
+      if (path.endsWith('.vpdf') || path.endsWith('.pdf')) {
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => VideoPdfViewerScreen(initialFile: file),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error handling link: $e');
     }
   }
 
@@ -124,16 +198,16 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                             color: Colors.green.withValues(alpha: 0.2),
                           ),
                         ),
-                        child: Row(
+                        child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(
+                            Icon(
                               Icons.shield_outlined,
                               size: 14,
                               color: Colors.greenAccent,
                             ),
-                            const SizedBox(width: 6),
-                            const Text(
+                            SizedBox(width: 6),
+                            Text(
                               'Privacy First: Images are never saved on device',
                               style: TextStyle(
                                 fontSize: 12,
@@ -158,6 +232,22 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                     childAspectRatio: 0.95,
                   ),
                   delegate: SliverChildListDelegate([
+                    // PRIMARY - Smart Scan (most common use case)
+                    _OptionCard(
+                      icon: Icons.camera_enhance,
+                      title: 'Smart Scan',
+                      subtitle: 'Scan new documents',
+                      gradient: [
+                        const Color(0xFFFF0844),
+                        const Color(0xFFFFB199),
+                      ],
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const CameraScreen()),
+                      ),
+                    ),
+
+                    // OCR Tool
                     _OptionCard(
                       icon: Icons.text_snippet,
                       title: 'OCR Tool',
@@ -171,6 +261,7 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                         MaterialPageRoute(builder: (_) => const OcrScreen()),
                       ),
                     ),
+                    // Secure PDF
                     _OptionCard(
                       icon: Icons.lock_person,
                       title: 'Secure PDF',
@@ -186,6 +277,7 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                         ),
                       ),
                     ),
+                    // Merge PDFs
                     _OptionCard(
                       icon: Icons.merge_type,
                       title: 'Merge PDFs',
@@ -201,6 +293,7 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                         ),
                       ),
                     ),
+                    // Signature
                     _OptionCard(
                       icon: Icons.draw_rounded,
                       title: 'Signature',
@@ -216,19 +309,30 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                         ),
                       ),
                     ),
+                    // Document Organization (NEW)
                     _OptionCard(
-                      icon: Icons.camera_enhance,
-                      title: 'Smart Scan',
-                      subtitle: 'Scan new documents',
+                      icon: Icons.folder_outlined,
+                      title: 'My Documents',
+                      subtitle: 'Organize & search',
                       gradient: [
-                        const Color(0xFFFF0844),
-                        const Color(0xFFFFB199),
+                        const Color(0xFFFC5C7D),
+                        const Color(0xFF6A82FB),
                       ],
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const CameraScreen()),
-                      ),
+                      onTap: () => _showDocumentOrganization(),
                     ),
+                    // Edit Existing PDF
+                    _OptionCard(
+                      icon: Icons.edit_document,
+                      title: 'Edit PDF',
+                      subtitle: 'Modify saved PDFs',
+                      gradient: [
+                        const Color(0xFF11998E),
+                        const Color(0xFF38EF7D),
+                      ],
+                      onTap: _editExistingPdf,
+                    ),
+
+                    // Video PDF
                     _OptionCard(
                       icon: Icons.video_collection,
                       title: 'Video PDF',
@@ -244,6 +348,7 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                         ),
                       ),
                     ),
+                    // Player
                     _OptionCard(
                       icon: Icons.play_circle_filled_rounded,
                       title: 'Player',
@@ -259,12 +364,426 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                         ),
                       ),
                     ),
+                    // Backup Data
+                    _OptionCard(
+                      icon: Icons.cloud_upload_outlined,
+                      title: 'Backup Data',
+                      subtitle: 'Export to ZIP',
+                      gradient: [
+                        const Color(0xFF4CA1AF),
+                        const Color(0xFFC4E0E5),
+                      ],
+                      onTap: () => BackupService.exportBackup(context),
+                    ),
+                    // Restore Data
+                    _OptionCard(
+                      icon: Icons.cloud_download_outlined,
+                      title: 'Restore Data',
+                      subtitle: 'Import from ZIP',
+                      gradient: [
+                        const Color(0xFF8E2DE2),
+                        const Color(0xFF4A00E0),
+                      ],
+                      onTap: () => BackupService.importBackup(context),
+                    ),
                   ]),
                 ),
               ),
               const SliverToBoxAdapter(child: SizedBox(height: 40)),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+
+
+  Future<void> _editExistingPdf() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+        allowMultiple: false,
+      );
+
+      if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const Center(child: CircularProgressIndicator()),
+        );
+
+        final manager = TempImageManager();
+        await manager.clearAll(); // Ensure we start fresh
+
+        final doc = await pdfx.PdfDocument.openFile(result.files.first.path!);
+        int pageCount = doc.pagesCount;
+
+        for (int i = 1; i <= pageCount; i++) {
+          final page = await doc.getPage(i);
+          // Render the page as image
+          final pageImage = await page.render(
+            width: page.width * 2.0, // Scale for better quality
+            height: page.height * 2.0,
+            format: pdfx.PdfPageImageFormat.jpeg,
+          );
+
+          if (pageImage != null) {
+            final tempFile = await manager.createTempImageFile();
+            await tempFile.writeAsBytes(pageImage.bytes);
+            manager.addImage(tempFile);
+          }
+          await page.close();
+        }
+
+        if (mounted) {
+          Navigator.pop(context); // close loading dialog
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const SavedPdfEditorScreen()),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        if (Navigator.canPop(context)) Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error editing PDF: $e')),
+        );
+      }
+    }
+  }
+
+  void _showDocumentOrganization() {
+    // Refresh documents before showing
+    setState(() {
+      _documents = DocumentStorageService.instance.documents;
+      _folders = DocumentStorageService.instance.folders;
+    });
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setSheetState) => DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (_, controller) => Container(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'My Documents',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // Search bar
+                TextField(
+                  onChanged: (value) {
+                    setSheetState(() {
+                      _searchQuery = value;
+                    });
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Search documents...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey.shade100,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Tags filter
+                SizedBox(
+                  height: 36,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      _buildTagChip(
+                        'All',
+                        isSelected: _selectedTag == 'All',
+                        onTap: () {
+                          setSheetState(() => _selectedTag = 'All');
+                        },
+                      ),
+                      _buildTagChip(
+                        'Bills',
+                        isSelected: _selectedTag == 'Bills',
+                        onTap: () {
+                          setSheetState(() => _selectedTag = 'Bills');
+                        },
+                      ),
+                      _buildTagChip(
+                        'IDs',
+                        isSelected: _selectedTag == 'IDs',
+                        onTap: () {
+                          setSheetState(() => _selectedTag = 'IDs');
+                        },
+                      ),
+                      _buildTagChip(
+                        'Notes',
+                        isSelected: _selectedTag == 'Notes',
+                        onTap: () {
+                          setSheetState(() => _selectedTag = 'Notes');
+                        },
+                      ),
+                      _buildTagChip(
+                        'Work',
+                        isSelected: _selectedTag == 'Work',
+                        onTap: () {
+                          setSheetState(() => _selectedTag = 'Work');
+                        },
+                      ),
+                      _buildTagChip(
+                        'Personal',
+                        isSelected: _selectedTag == 'Personal',
+                        onTap: () {
+                          setSheetState(() => _selectedTag = 'Personal');
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Divider(),
+                // Documents list
+                Text(
+                  _selectedTag == 'All'
+                      ? 'All Documents'
+                      : 'Filtered Documents',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _filteredDocuments.isEmpty
+                      ? _buildEmptyState()
+                      : ListView.builder(
+                          controller: controller,
+                          itemCount: _filteredDocuments.length,
+                          itemBuilder: (context, index) {
+                            final doc = _filteredDocuments[index];
+                            return _buildDocumentItem(
+                              title: doc.name,
+                              date: doc.timeAgo,
+                              size: doc.formattedSize,
+                              tags: doc.tags,
+                              isPdf: doc.type == DocumentType.pdf,
+                              onTap: () {
+                                OpenFilex.open(doc.filePath);
+                              },
+                              onMoreTap: () {
+                                _showDocumentActions(doc);
+                              }
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(height: 40),
+          Icon(Icons.folder_open, size: 64, color: Colors.grey.shade300),
+          const SizedBox(height: 16),
+          Text(
+            'No documents found',
+            style: TextStyle(color: Colors.grey.shade500),
+          ),
+          const SizedBox(height: 8),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CameraScreen()),
+              );
+            },
+            icon: const Icon(Icons.add),
+            label: const Text('Start Scanning'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTagChip(
+    String label, {
+    bool isSelected = false,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: FilterChip(
+        label: Text(label),
+        selected: isSelected,
+        onSelected: (_) => onTap(),
+        backgroundColor: Colors.grey.shade200,
+        selectedColor: Colors.blue.withValues(alpha: 0.2),
+      ),
+    );
+  }
+
+  Widget _buildDocumentItem({
+    required String title,
+    required String date,
+    required String size,
+    required List<String> tags,
+    bool isPdf = true,
+    required VoidCallback onTap,
+    required VoidCallback onMoreTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.black12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: (isPdf ? Colors.red : Colors.blue).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              isPdf ? Icons.picture_as_pdf : Icons.image,
+              color: isPdf ? Colors.red : Colors.blue,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text(
+                      date,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const Text(' • ', style: TextStyle(color: Colors.grey)),
+                    Text(
+                      size,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 4,
+                  children: tags
+                      .map(
+                        (tag) => Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            tag,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Colors.blue,
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.more_vert, color: Colors.grey),
+            onPressed: onMoreTap,
+          ),
+        ],
+      ),
+    ),
+    );
+  }
+
+  void _showDocumentActions(ScannedDocument doc) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => Container(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(doc.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.open_in_new),
+              title: const Text('Open'),
+              onTap: () {
+                Navigator.pop(context);
+                OpenFilex.open(doc.filePath);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.share),
+              title: const Text('Share'),
+              onTap: () {
+                Navigator.pop(context);
+                Share.shareXFiles([XFile(doc.filePath)], text: doc.name);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text('Delete', style: TextStyle(color: Colors.red)),
+              onTap: () async {
+                Navigator.pop(context);
+                // Future expansion: actually delete the document via DocumentStorageService
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Delete functionality coming soon')));
+              },
+            ),
+          ],
         ),
       ),
     );

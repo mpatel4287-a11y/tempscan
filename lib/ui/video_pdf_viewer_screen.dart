@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:chewie/chewie.dart';
 import 'package:video_player/video_player.dart';
@@ -6,7 +8,36 @@ import 'package:temp_scan/utils/video_embed_builder.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:temp_scan/services/document_storage_service.dart';
+
+// Top-level function for background Isolate task
+List<String> _searchIsolateAction(String rootPath) {
+  final found = <String>[];
+  try {
+    final root = Directory(rootPath);
+    if (!root.existsSync()) return found;
+    
+    void search(Directory dir, int depth) {
+      if (depth > 6) return; // Prevent infinite hanging
+      final dirName = dir.path.split('/').last.toLowerCase();
+      // Skip system heavy/hidden directories
+      if (dirName.startsWith('.') || dirName == 'android' || dirName == 'data' || dirName == 'cache') return;
+      
+      try {
+        final entities = dir.listSync(recursive: false);
+        for (final e in entities) {
+          if (e is File && e.path.toLowerCase().endsWith('.vpdf')) {
+            found.add(e.path);
+          } else if (e is Directory) {
+            search(e, depth + 1);
+          }
+        }
+      } catch (_) {}
+    }
+    search(root, 0);
+  } catch (_) {}
+  return found;
+}
 
 class VideoPdfViewerScreen extends StatefulWidget {
   final File? initialFile;
@@ -49,35 +80,36 @@ class _VideoPdfViewerScreenState extends State<VideoPdfViewerScreen> {
   Future<void> _scanForFiles() async {
     setState(() => _isScanning = true);
     try {
-      // Check for broad storage permissions on Android 11+
-      if (Platform.isAndroid) {
-         if (await Permission.manageExternalStorage.isDenied) {
-           await Permission.manageExternalStorage.request();
-         }
-         // Fallback to regular storage if management is not granted or supported
-         await Permission.storage.request();
-      }
-
-      final List<Directory?> searchDirs = [
-        Directory('/storage/emulated/0'), // Internal Storage Root
-        await getExternalStorageDirectory(),
-        await getApplicationDocumentsDirectory(),
-      ];
-
+      await DocumentStorageService.instance.initialize();
+      final docs = DocumentStorageService.instance.documents;
+      
       final List<File> found = [];
-      final Set<String> seenPaths = {}; // To avoid duplicates from overlapping roots
+      final Set<String> seenPaths = {};
 
-      for (final dir in searchDirs) {
-        if (dir != null && await dir.exists()) {
-          try {
-            // We use a manual recursion to avoid deep system folders and hanging
-            await _recursiveScan(dir, found, seenPaths, 0, 3);
-          } catch (e) {
-             debugPrint('Error scanning dir ${dir.path}: $e');
+      // 1. Instant O(1) fetch from internal Document Storage
+      for (final doc in docs) {
+        if (doc.filePath.toLowerCase().endsWith('.vpdf') || doc.name.toLowerCase().endsWith('.vpdf')) {
+          if (!seenPaths.contains(doc.filePath)) {
+             final f = File(doc.filePath);
+             if (await f.exists()) {
+               found.add(f);
+               seenPaths.add(f.path);
+             }
           }
         }
       }
-      
+
+      // 2. Add files from entire device using an Isolate (won't block UI)
+      if (Platform.isAndroid) {
+         final paths = await compute(_searchIsolateAction, '/storage/emulated/0');
+         for (final path in paths) {
+           if (!seenPaths.contains(path)) {
+             seenPaths.add(path);
+             found.add(File(path));
+           }
+         }
+      }
+
       if (mounted) {
         setState(() {
           _discoveredFiles = found;
@@ -86,36 +118,6 @@ class _VideoPdfViewerScreenState extends State<VideoPdfViewerScreen> {
       }
     } catch (e) {
       if (mounted) setState(() => _isScanning = false);
-    }
-  }
-
-  Future<void> _recursiveScan(Directory dir, List<File> found, Set<String> seen, int depth, int maxDepth) async {
-    if (depth > maxDepth) return;
-    
-    // Skip hidden or system-heavy directories to avoid lag/permission issues
-    final dirName = dir.path.split('/').last.toLowerCase();
-    if (dirName.startsWith('.') || 
-        dirName == 'android' || 
-        dirName == 'data' || 
-        dirName == 'com.android.providers.media' ||
-        dirName == 'cache') {
-      return;
-    }
-
-    try {
-      final entities = dir.listSync(recursive: false);
-      for (final entity in entities) {
-        if (entity is File) {
-          if (entity.path.endsWith('.vpdf') && !seen.contains(entity.path)) {
-            found.add(entity);
-            seen.add(entity.path);
-          }
-        } else if (entity is Directory) {
-          await _recursiveScan(entity, found, seen, depth + 1, maxDepth);
-        }
-      }
-    } catch (e) {
-      // Ignore directories we can't access
     }
   }
 
@@ -139,6 +141,23 @@ class _VideoPdfViewerScreenState extends State<VideoPdfViewerScreen> {
           );
         }
       }
+    }
+  }
+
+  Future<Uint8List?> _getThumbnail(File file) async {
+    try {
+      final doc = await PdfDocument.openFile(file.path);
+      final page = await doc.getPage(1);
+      final pageImage = await page.render(
+        width: page.width / 4,
+        height: page.height / 4,
+        format: PdfPageImageFormat.jpeg,
+      );
+      await page.close();
+      await doc.close();
+      return pageImage?.bytes;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -210,8 +229,16 @@ class _VideoPdfViewerScreenState extends State<VideoPdfViewerScreen> {
        autoPlay: true,
        looping: false,
        aspectRatio: _videoPlayerController!.value.aspectRatio,
+       allowFullScreen: true,
+       allowPlaybackSpeedChanging: true,
+       materialProgressColors: ChewieProgressColors(
+         playedColor: Colors.blueAccent,
+         handleColor: Colors.blue,
+         backgroundColor: Colors.grey.shade800,
+         bufferedColor: Colors.white38,
+       ),
        errorBuilder: (context, errorMessage) {
-         return Center(child: Text(errorMessage, style: const TextStyle(color: Colors.white)));
+         return Center(child: Text(errorMessage, style: const TextStyle(color: Colors.redAccent)));
        },
     );
 
@@ -328,19 +355,29 @@ class _VideoPdfViewerScreenState extends State<VideoPdfViewerScreen> {
         if (_isScanning)
           const LinearProgressIndicator(),
         Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(20.0),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Icon(Icons.manage_search, size: 32, color: Colors.blue),
-              const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Discovered Video PDFs', 
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text('Video PDFs', 
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const SizedBox(height: 4),
                   Text('${_discoveredFiles.length} files found',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    style: const TextStyle(fontSize: 14, color: Colors.white54)),
                 ],
+              ),
+              ElevatedButton.icon(
+                onPressed: _pickPdf,
+                icon: const Icon(Icons.folder_open, size: 20),
+                label: const Text('Open'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
               ),
             ],
           ),
@@ -351,33 +388,89 @@ class _VideoPdfViewerScreenState extends State<VideoPdfViewerScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.search_off, size: 64, color: Colors.grey),
+                      Icon(Icons.video_file_outlined, size: 80, color: Colors.white.withValues(alpha: 0.1)),
                       const SizedBox(height: 16),
-                      const Text('No Video PDFs found in standard folders.'),
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: _pickPdf,
-                        icon: const Icon(Icons.folder_open),
-                        label: const Text('Open File Manually'),
-                      ),
+                      const Text('No Video PDFs found.', style: TextStyle(color: Colors.white54, fontSize: 16)),
                     ],
                   ),
                 )
-              : ListView.builder(
+              : GridView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                     crossAxisCount: 2,
+                     crossAxisSpacing: 16,
+                     mainAxisSpacing: 16,
+                     childAspectRatio: 0.8,
+                  ),
                   itemCount: _discoveredFiles.length,
                   itemBuilder: (context, index) {
                     final file = _discoveredFiles[index];
-                    final isVPDF = file.path.endsWith('.vpdf');
-                    return ListTile(
-                      leading: Icon(
-                        isVPDF ? Icons.video_file : Icons.picture_as_pdf,
-                        color: isVPDF ? Colors.blue : Colors.red,
-                      ),
-                      title: Text(file.path.split('/').last),
-                      subtitle: Text(file.path, 
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 10)),
+                    final fileName = file.path.split('/').last;
+                    
+                    return GestureDetector(
                       onTap: () => _loadPdf(file),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.05),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Container(
+                                width: double.infinity,
+                                decoration: const BoxDecoration(
+                                  color: Colors.black26,
+                                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                                ),
+                                child: FutureBuilder<Uint8List?>(
+                                  future: _getThumbnail(file),
+                                  builder: (context, snapshot) {
+                                    if (snapshot.connectionState == ConnectionState.waiting) {
+                                      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                                    }
+                                    if (snapshot.hasData && snapshot.data != null) {
+                                      return Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          ClipRRect(
+                                            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                                            child: Image.memory(snapshot.data!, fit: BoxFit.cover),
+                                          ),
+                                          Container(color: Colors.black.withOpacity(0.3)),
+                                          const Center(child: Icon(Icons.play_circle_fill, size: 48, color: Colors.white)),
+                                        ],
+                                      );
+                                    }
+                                    return const Center(child: Icon(Icons.play_circle_fill, size: 48, color: Colors.white54));
+                                  },
+                                ),
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    fileName,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  const Text(
+                                    'Video PDF',
+                                    style: TextStyle(color: Colors.blueAccent, fontSize: 11, fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     );
                   },
                 ),

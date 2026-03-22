@@ -132,7 +132,14 @@ class _CameraScreenState extends State<CameraScreen> {
       body: Stack(
         children: [
           // Camera preview
-          SizedBox.expand(child: CameraPreview(_cameraController.controller!)),
+          Center(
+            child: AspectRatio(
+              aspectRatio: 3 / 4,
+              child: ClipRect(
+                child: CameraPreview(_cameraController.controller!),
+              ),
+            ),
+          ),
 
           // Grid overlay
           if (_showGrid) Positioned.fill(child: _GridOverlay()),
@@ -520,7 +527,7 @@ class _GridOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final width = size.width * 0.85;
-    final height = size.height * 0.55;
+    final height = width * 4 / 3; // 3:4 aspect ratio (Portrait 4:3)
     final thirdWidth = width / 3;
     final thirdHeight = height / 3;
 
@@ -712,7 +719,7 @@ class _ScanFrameOverlay extends StatelessWidget {
           Center(
             child: Container(
               width: MediaQuery.of(context).size.width * 0.85,
-              height: MediaQuery.of(context).size.height * 0.55,
+              height: (MediaQuery.of(context).size.width * 0.85) * 4 / 3, // 3:4 aspect ratio
               decoration: BoxDecoration(
                 border: Border.all(
                   color: isAutoScan ? Colors.blueAccent.withValues(alpha: 0.5) : Colors.white.withValues(alpha: 0.3),
@@ -760,7 +767,7 @@ class _ScanningEffectState extends State<_ScanningEffect> with SingleTickerProvi
       animation: _anim,
       builder: (context, child) {
         return Positioned(
-          top: _anim.value * MediaQuery.of(context).size.height * 0.55,
+          top: _anim.value * (MediaQuery.of(context).size.width * 0.85) * 4 / 3,
           left: 0,
           right: 0,
           child: Container(

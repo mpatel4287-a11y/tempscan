@@ -12,7 +12,6 @@ import '../services/settings_service.dart';
 import '../services/signature_service.dart'; // Added
 import 'pdf_success_screen.dart';
 import 'rename_dialog.dart';
-import '../camera/camera_screen.dart';
 
 class PasswordPdfScreen extends StatefulWidget {
   const PasswordPdfScreen({super.key});
@@ -96,10 +95,6 @@ class _PasswordPdfScreenState extends State<PasswordPdfScreen> {
         _showError('Error picking PDF: $e');
       }
     }
-  }
-
-  void _scanDocument() {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const CameraScreen())).then((_) => setState(() {}));
   }
 
   Future<void> _protectPdf() async {
@@ -296,23 +291,6 @@ class _PasswordPdfScreenState extends State<PasswordPdfScreen> {
                   const SizedBox(height: 16),
                   const Text('Select PDF to Protect', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
                 ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text('OR', style: TextStyle(color: Colors.white24, fontSize: 12, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _scanDocument,
-              icon: const Icon(Icons.camera_alt_outlined),
-              label: const Text('Scan New Document'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.all(16),
-                foregroundColor: Colors.white70,
-                side: const BorderSide(color: Colors.white10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
             ),
           ),

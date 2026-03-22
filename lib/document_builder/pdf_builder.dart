@@ -44,20 +44,22 @@ class PdfBuilder {
             final pageContent = pw.Stack(
               children: [
                 pw.Center(
-                  child: pw.ClipRect(
-                    child: pw.Container(
-                      width: PdfPageFormat.a4.width - 40,
-                      height: PdfPageFormat.a4.height - 40,
-                      child: pw.Image(
-                        image,
-                        alignment: pw.Alignment(
-                          -1.0 + (page.cropRect.x + page.cropRect.width / 2) * 2 / (1 - page.cropRect.width + 0.00001),
-                          -1.0 + (page.cropRect.y + page.cropRect.height / 2) * 2 / (1 - page.cropRect.height + 0.00001),
+                  child: page.cropRect.isFull 
+                    ? pw.Image(image, fit: pw.BoxFit.contain) 
+                    : pw.ClipRect(
+                        child: pw.Container(
+                          width: PdfPageFormat.a4.width - 40,
+                          height: PdfPageFormat.a4.height - 40,
+                          child: pw.Image(
+                            image,
+                            alignment: pw.Alignment(
+                              -1.0 + (page.cropRect.x + page.cropRect.width / 2) * 2 / (1 - page.cropRect.width + 0.00001),
+                              -1.0 + (page.cropRect.y + page.cropRect.height / 2) * 2 / (1 - page.cropRect.height + 0.00001),
+                            ),
+                            fit: pw.BoxFit.cover,
+                          ),
                         ),
-                        fit: pw.BoxFit.cover,
                       ),
-                    ),
-                  ),
                 ),
                 if (addWatermark)
                   pw.Positioned(

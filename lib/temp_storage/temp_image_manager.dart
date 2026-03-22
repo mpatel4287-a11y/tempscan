@@ -174,6 +174,33 @@ class TempImageManager {
     return null;
   }
 
+  /// Replaces the file of a page with a new one (e.g. after advanced editing)
+  Future<void> updatePageFile(int index, File newFile) async {
+    if (index >= 0 && index < _pages.length) {
+      final oldFile = _pages[index].file;
+      _pages[index] = ScannedPage(
+        file: newFile,
+        customName: _pages[index].customName,
+        rotation: _pages[index].rotation,
+        filter: _pages[index].filter,
+        filterValues: _pages[index].filterValues,
+        cropRect: _pages[index].cropRect,
+        signaturePath: _pages[index].signaturePath,
+        signaturePosition: _pages[index].signaturePosition,
+        annotations: _pages[index].annotations,
+        clarity: _pages[index].clarity,
+        noiseReduction: _pages[index].noiseReduction,
+      );
+      
+      // Delete old file if it's in our temp storage
+      if (oldFile.path != newFile.path && await oldFile.exists()) {
+        try {
+          await oldFile.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
   /// Remove single page (backward compatible)
   Future<void> removeImage(File file) async {
     final page = _pages.firstWhereOrNull((p) => p.file.path == file.path);
@@ -333,6 +360,7 @@ class TempImageManager {
       if (_pages[i].isDuplicate) continue;
 
       final currentSize = _pages[i].file.lengthSync();
+      // ignore: unused_local_variable
       final currentName = _pages[i].file.path.split('/').last;
 
       for (int j = i + 1; j < _pages.length; j++) {

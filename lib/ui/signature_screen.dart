@@ -292,6 +292,8 @@ class _SignaturePainterState extends State<SignaturePainter> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanDown: (_) {}, // Win gesture arena immediately to prevent scrolling
       onPanStart: (d) => setState(() => _currentStroke = [d.localPosition]),
       onPanUpdate: (d) => setState(() => _currentStroke!.add(d.localPosition)),
       onPanEnd: (d) {

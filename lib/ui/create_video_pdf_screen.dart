@@ -133,7 +133,7 @@ class _CreateVideoPdfScreenState extends State<CreateVideoPdfScreen> {
       for (int i = 0; i < _selectedVideos.length; i++) {
         final videoFile = _selectedVideos[i];
 
-        final Uint8List? thumbData = await VideoThumbnail.thumbnailData(
+        final Uint8List thumbData = await VideoThumbnail.thumbnailData(
           video: videoFile.path,
           imageFormat: ImageFormat.JPEG,
           maxWidth: 400,
