@@ -140,19 +140,6 @@ class _CreateVideoPdfScreenState extends State<CreateVideoPdfScreen> {
           quality: 70,
         );
 
-        if (thumbData == null) {
-          // Skip this video but continue generating the PDF instead of crashing.
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Could not generate thumbnail for ${videoFile.path.split('/').last}. Skipping this video.'),
-                backgroundColor: Colors.redAccent,
-              ),
-            );
-          }
-          continue;
-        }
-
         pdf.addPage(
           pw.Page(
             build: (context) {
