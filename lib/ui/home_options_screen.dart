@@ -16,6 +16,7 @@ import '../models/folder.dart';
 import 'create_video_pdf_screen.dart';
 import 'video_pdf_viewer_screen.dart';
 import 'saved_pdf_editor_screen.dart';
+import 'pdf_content_editor_screen.dart';
 import '../temp_storage/temp_image_manager.dart';
 import 'package:pdfx/pdfx.dart' as pdfx;
 import '../services/backup_service.dart';
@@ -408,46 +409,19 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
       );
 
       if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => const Center(child: CircularProgressIndicator()),
-        );
-
-        final manager = TempImageManager();
-        await manager.clearAll(); // Ensure we start fresh
-
-        final doc = await pdfx.PdfDocument.openFile(result.files.first.path!);
-        int pageCount = doc.pagesCount;
-
-        for (int i = 1; i <= pageCount; i++) {
-          final page = await doc.getPage(i);
-          // Render the page as image
-          final pageImage = await page.render(
-            width: page.width * 2.0, // Scale for better quality
-            height: page.height * 2.0,
-            format: pdfx.PdfPageImageFormat.jpeg,
-          );
-
-          if (pageImage != null) {
-            final tempFile = await manager.createTempImageFile();
-            await tempFile.writeAsBytes(pageImage.bytes);
-            manager.addImage(tempFile);
-          }
-          await page.close();
-        }
-
         if (mounted) {
-          Navigator.pop(context); // close loading dialog
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const SavedPdfEditorScreen()),
+            MaterialPageRoute(
+              builder: (_) => PdfContentEditorScreen(
+                filePath: result.files.first.path!,
+              ),
+            ),
           );
         }
       }
     } catch (e) {
       if (mounted) {
-        if (Navigator.canPop(context)) Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error editing PDF: $e')),
         );
