@@ -45,7 +45,7 @@ class _AutomationRulesScreenState extends State<AutomationRulesScreen> {
         children: [
           Container(
             padding: const EdgeInsets.all(16),
-            color: Colors.blueAccent.withOpacity(0.1),
+            color: Colors.blueAccent.withValues(alpha: 0.1),
             child: Row(
               children: [
                 const Icon(Icons.info_outline, color: Colors.blueAccent),

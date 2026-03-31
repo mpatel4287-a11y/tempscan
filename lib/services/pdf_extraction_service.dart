@@ -1,10 +1,13 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show Size;
 import 'package:syncfusion_flutter_pdf/pdf.dart' as sfpdf;
 
 enum PdfElementType { text, image }
 
 class PdfElement {
+  final int pageIndex;
+  final Size pageSize;
   final PdfElementType type;
   String text;
   Uint8List? imageBytes;
@@ -14,6 +17,8 @@ class PdfElement {
   double? height;
 
   PdfElement({
+    required this.pageIndex,
+    required this.pageSize,
     required this.type,
     this.text = '',
     this.imageBytes,
@@ -34,6 +39,9 @@ class PdfExtractionService {
       final sfpdf.PdfTextExtractor extractor = sfpdf.PdfTextExtractor(document);
 
       for (int i = 0; i < document.pages.count; i++) {
+        final sfpdf.PdfPage page = document.pages[i];
+        final Size pageSize = Size(page.size.width, page.size.height);
+
         // Extract text with positioning
         final List<sfpdf.TextLine> textLines = extractor.extractTextLines(
           startPageIndex: i,
@@ -42,6 +50,8 @@ class PdfExtractionService {
 
         for (final sfpdf.TextLine line in textLines) {
           elements.add(PdfElement(
+            pageIndex: i,
+            pageSize: pageSize,
             type: PdfElementType.text,
             text: line.text,
             x: line.bounds.left,
@@ -51,13 +61,13 @@ class PdfExtractionService {
           ));
         }
 
-        // Image extraction - SfPdfDocument.pages[i].extractImages() returns a List<Uint8List>
-        // and we can potentially get their positions if we use more advanced APIs.
-        // For simplicity and to match "Word-like" editing, we'll append images at the end of pages or intercalated.
+        // Image extraction
         final List<Uint8List>? images = await _extractImagesFromPage(document, i);
         if (images != null) {
           for (final Uint8List imgBytes in images) {
             elements.add(PdfElement(
+              pageIndex: i,
+              pageSize: pageSize,
               type: PdfElementType.image,
               imageBytes: imgBytes,
             ));
@@ -67,7 +77,7 @@ class PdfExtractionService {
 
       document.dispose();
     } catch (e) {
-      print('Error extracting PDF: $e');
+      // Error extracting PDF
     }
     return elements;
   }

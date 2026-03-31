@@ -438,7 +438,7 @@ class _VideoPdfViewerScreenState extends State<VideoPdfViewerScreen> {
                                             borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                                             child: Image.memory(snapshot.data!, fit: BoxFit.cover),
                                           ),
-                                          Container(color: Colors.black.withOpacity(0.3)),
+                                          Container(color: Colors.black.withValues(alpha: 0.3)),
                                           const Center(child: Icon(Icons.play_circle_fill, size: 48, color: Colors.white)),
                                         ],
                                       );

@@ -78,6 +78,7 @@ class BackupService {
       );
 
       if (result == null || result.files.isEmpty || result.files.first.path == null) return;
+      if (!context.mounted) return;
 
       showDialog(
         context: context,

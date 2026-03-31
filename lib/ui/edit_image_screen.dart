@@ -882,8 +882,9 @@ class _EditImageScreenState extends State<EditImageScreen> {
                 MaterialPageRoute(builder: (_) => AdvancedEditorScreen(documentFile: _page.file))
               );
               if (result != null && result is File && mounted) {
-                 // Replace the page file with the newly edited/flattened version
+                 if (!mounted) return;
                  await _manager.updatePageFile(widget.pageIndex, result);
+                 if (!mounted) return;
                  setState(() {
                    _page = _manager.getPage(widget.pageIndex)!;
                  });

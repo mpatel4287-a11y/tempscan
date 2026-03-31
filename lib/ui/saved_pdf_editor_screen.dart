@@ -45,6 +45,7 @@ class _SavedPdfEditorScreenState extends State<SavedPdfEditorScreen> {
     
     if (result != null && result is File && mounted) {
        await _manager.updatePageFile(_currentPage, result);
+       if (!mounted) return;
        setState(() {});
        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Page updated with advanced edits')));
     }
