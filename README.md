@@ -115,8 +115,9 @@ Merge PDFs → Reorder → Watermark → Automation applies tags
 2. Code → `flutter analyze` → PR
 3. Follow Dart style + add tests
 
-## 📄 License
-Proprietary (entitlements for pro features)
+
+
+
 
 ---
 **Pioneering .vPDF format!** ⭐ [Demo APK/IPA coming soon]  
