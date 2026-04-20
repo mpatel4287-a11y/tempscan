@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import '../services/advanced_ocr_engine.dart';
+import '../services/table_extraction_service.dart';
+import '../services/excel_export_service.dart';
 
 class OcrScreen extends StatefulWidget {
   const OcrScreen({super.key});
@@ -19,6 +21,8 @@ class _OcrScreenState extends State<OcrScreen> {
   bool _hasError = false;
   String _errorMessage = '';
   List<String> _detectedLines = [];
+  List<EditableTextBlock> _blocks = [];
+  String _processingStage = 'SCANNING...';
 
   Future<void> _pickImage() async {
     try {
@@ -33,6 +37,7 @@ class _OcrScreenState extends State<OcrScreen> {
           _extractedText = '';
           _hasError = false;
           _detectedLines.clear();
+          _blocks.clear();
         });
       }
     } catch (e) {
@@ -52,17 +57,17 @@ class _OcrScreenState extends State<OcrScreen> {
     });
 
     try {
-      final inputImage = InputImage.fromFile(_selectedImage!);
-      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-      final recognizedText = await textRecognizer.processImage(inputImage);
-      await textRecognizer.close();
-
+      setState(() => _processingStage = 'ANALYZING...');
+      final blocks = await AdvancedOcrEngine.instance.parseDocument(_selectedImage!);
+      
       if (!mounted) return;
 
       setState(() {
-        _extractedText = recognizedText.text;
-        _detectedLines = _extractedText.split('\n').where((line) => line.trim().isNotEmpty).toList();
+        _blocks = blocks;
+        _extractedText = blocks.map((b) => b.text).join('\n');
+        _detectedLines = blocks.map((b) => b.text).toList();
         _isProcessing = false;
+        _processingStage = 'SCANNING...';
       });
 
       if (_extractedText.isEmpty) {
@@ -78,6 +83,27 @@ class _OcrScreenState extends State<OcrScreen> {
         _hasError = true;
         _errorMessage = 'Extraction failed: $e';
       });
+    }
+  }
+
+  Future<void> _exportToExcel() async {
+    if (_blocks.isEmpty) return;
+
+    setState(() => _isProcessing = true);
+    try {
+      final tableData = TableExtractionService.instance.extractTable(_blocks);
+      if (tableData.isEmpty) {
+         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No structured table found')));
+         setState(() => _isProcessing = false);
+         return;
+      }
+      
+      final fileName = 'Scan_${DateTime.now().millisecondsSinceEpoch}';
+      await ExcelExportService.instance.exportAndShare(tableData, fileName);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Excel export failed: $e')));
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -178,7 +204,7 @@ class _OcrScreenState extends State<OcrScreen> {
         icon: _isProcessing
             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
             : const Icon(Icons.flash_on_rounded, color: Colors.black),
-        label: Text(_isProcessing ? 'SCANNING...' : 'EXTRACT TEXT', style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+        label: Text(_isProcessing ? _processingStage : 'EXTRACT TEXT', style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
@@ -210,6 +236,8 @@ class _OcrScreenState extends State<OcrScreen> {
               icon: const Icon(Icons.share_rounded, color: Colors.white70),
               onPressed: () => Share.share(_extractedText),
             ),
+            const SizedBox(width: 8),
+            _buildExportButton(),
           ],
         ),
         const SizedBox(height: 16),
@@ -256,6 +284,21 @@ class _OcrScreenState extends State<OcrScreen> {
           const SizedBox(width: 12),
           Expanded(child: Text(_errorMessage, style: const TextStyle(color: Colors.redAccent, fontSize: 13))),
         ],
+      ),
+    );
+  }
+
+  Widget _buildExportButton() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.greenAccent.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.2)),
+      ),
+      child: TextButton.icon(
+        onPressed: _exportToExcel,
+        icon: const Icon(Icons.table_chart_rounded, size: 18, color: Colors.greenAccent),
+        label: const Text('EXCEL', style: TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold)),
       ),
     );
   }

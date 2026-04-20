@@ -34,8 +34,10 @@ dependencies:
   shared_preferences: ^2.5.4
 
   syncfusion_flutter_pdf: ^32.1.25
-  archive: ^4.0.9
+  archive: ^4.0.0
   uri_content: ^3.1.2
+  syncfusion_flutter_xlsio: ^32.2.9
+  xml: ^6.3.0
 
 dev_dependencies:
   flutter_test:

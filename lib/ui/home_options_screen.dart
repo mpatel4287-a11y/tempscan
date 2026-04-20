@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'ocr_screen.dart';
 import 'merge_pdfs_screen.dart';
 import 'password_pdf_screen.dart';
@@ -15,7 +14,7 @@ import '../models/document.dart';
 import '../models/folder.dart';
 import 'create_video_pdf_screen.dart';
 import 'video_pdf_viewer_screen.dart';
-import 'pdf_content_editor_screen.dart';
+import 'multi_file_reader_screen.dart';
 import '../services/backup_service.dart';
 import 'package:uri_content/uri_content.dart';
 import 'package:path_provider/path_provider.dart';
@@ -94,6 +93,7 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
 
   void _handleLink(Uri uri) async {
     try {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
       File file;
       if (uri.scheme == 'content') {
         final bytes = await uri.getContentOrNull();
@@ -102,23 +102,56 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
           return;
         }
         final tempDir = await getTemporaryDirectory();
-        final timestamp = DateTime.now().millisecondsSinceEpoch;
-        file = File('${tempDir.path}/temp_vpdf_$timestamp.vpdf');
+        
+        // --- SMART EXTENSION DETECTION (Magic Bytes) ---
+        String ext = 'file';
+        if (uri.path.contains('.')) {
+          ext = uri.path.split('.').last.toLowerCase();
+        }
+
+        // Sniff bytes if extension is missing or generic
+        if (ext == 'file' || ext.isEmpty || ext.length > 5) {
+          if (bytes.length > 4) {
+            final header = bytes.sublist(0, 4);
+            // Check for PDF (%PDF)
+            if (header[0] == 0x25 && header[1] == 0x50 && header[2] == 0x44 && header[3] == 0x46) {
+              ext = 'pdf';
+            }
+            // Check for XLSX/ZIP (PK..)
+            else if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04) {
+              ext = 'xlsx';
+            }
+            // Check for JPEG
+            else if (header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF) {
+              ext = 'jpg';
+            }
+          }
+        }
+        
+        file = File('${tempDir.path}/temp_file_$timestamp.$ext');
         await file.writeAsBytes(bytes);
       } else {
         file = File(uri.toFilePath());
       }
 
+      if (!mounted) return;
+
       final path = file.path.toLowerCase();
-      if (path.endsWith('.vpdf') || path.endsWith('.pdf')) {
-        if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => VideoPdfViewerScreen(initialFile: file),
-            ),
-          );
-        }
+      if (path.endsWith('.vpdf')) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VideoPdfViewerScreen(initialFile: file),
+          ),
+        );
+      } else {
+        // Route everything else to Multi-File Reader
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MultiFileReaderScreen(initialFile: file),
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Error handling link: $e');
@@ -318,16 +351,21 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
                       ],
                       onTap: () => _showDocumentOrganization(),
                     ),
-                    // Edit Existing PDF
+                    // Multi-File Reader (NEW)
                     _OptionCard(
-                      icon: Icons.edit_document,
-                      title: 'Edit PDF',
-                      subtitle: 'Modify saved PDFs',
+                      icon: Icons.folder_shared_rounded,
+                      title: 'File Reader',
+                      subtitle: 'All OS formats',
                       gradient: [
                         const Color(0xFF11998E),
                         const Color(0xFF38EF7D),
                       ],
-                      onTap: _editExistingPdf,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const MultiFileReaderScreen(),
+                        ),
+                      ),
                     ),
 
                     // Video PDF
@@ -397,34 +435,6 @@ class _HomeOptionsScreenState extends State<HomeOptionsScreen> {
 
 
 
-  Future<void> _editExistingPdf() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['pdf'],
-        allowMultiple: false,
-      );
-
-      if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
-        if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => PdfContentEditorScreen(
-                filePath: result.files.first.path!,
-              ),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error editing PDF: $e')),
-        );
-      }
-    }
-  }
 
   void _showDocumentOrganization() {
     // Refresh documents before showing

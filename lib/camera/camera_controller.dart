@@ -15,7 +15,7 @@ class TempScanCameraController {
     _cameras = await availableCameras();
     _controller = CameraController(
       _cameras!.first,
-      ResolutionPreset.high,
+      ResolutionPreset.max,
       enableAudio: false,
     );
     await _controller!.initialize();
