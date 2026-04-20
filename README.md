@@ -121,5 +121,5 @@ Merge PDFs → Reorder → Watermark → Automation applies tags
 
 ---
 **Pioneering .vPDF format!** ⭐ [Demo APK/IPA coming soon]  
-**Built with Flutter ❤️** | **TempScan Team**
+**Built with Flutter ❤️** | **The Box Creations**
 
